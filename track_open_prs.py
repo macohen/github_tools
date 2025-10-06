@@ -80,6 +80,7 @@ def main():
     rows = []
     unassigned_count = 0
     old_prs = []
+    stale_prs = []
     
     for pr in prs:
         pr_url = pr["html_url"]
@@ -92,9 +93,11 @@ def main():
         # Count statistics
         if reviewers == "None":
             unassigned_count += 1
+        if get_days_old(pr["created_at"]) >= 23 and get_days_old(pr["created_at"]) <= 30:
+            stale_prs.append((pr["created_at"], pr_title, pr_url, reviewers))
         if get_days_old(pr["created_at"]) > 30:
             old_prs.append((pr["created_at"], pr_title, pr_url, reviewers))
-        
+
         rows.append([
             pr_url,
             pr["created_at"],
@@ -105,12 +108,19 @@ def main():
         ])
 
     # Print summary to stderr so it doesn't interfere with CSV output
-    print(f"SUMMARY: {len(prs)} total PRs, {unassigned_count} unassigned, {len(old_prs)} open >30 days", file=sys.stderr)
-    
+    print(f"SUMMARY: {len(prs)} total PRs, {unassigned_count} no reviewers, {len(old_prs)} open >30 days", file=sys.stderr)
+
     if old_prs:
         print(f"\n {len(old_prs)} PRs open >30 days (oldest first):", file=sys.stderr)
         old_prs.sort()  # Sort by created_at (oldest first)
         for created_at, title, url, reviewers in old_prs:
+            days = get_days_old(created_at)
+            print(f"  {days} days: {url}; reviewers: {reviewers}", file=sys.stderr)
+
+    if stale_prs:
+        print(f"\n {len(stale_prs)} PRs growing old: open >23 days and < 30 days(oldest first):", file=sys.stderr)
+        stale_prs.sort()  # Sort by created_at (oldest first)
+        for created_at, title, url, reviewers in stale_prs:
             days = get_days_old(created_at)
             print(f"  {days} days: {url}; reviewers: {reviewers}", file=sys.stderr)
     
