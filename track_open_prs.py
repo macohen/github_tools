@@ -88,7 +88,7 @@ def get_reviewers(pr_number):
     if response.status_code == 200:
         reviews = response.json()
         all_reviewers.update(f"{review["user"]["login"]} {review["state"]}" for review in reviews if review["user"])
-    
+
     return ", ".join(sorted(all_reviewers)) if all_reviewers else "None"
 
 def human_age(created_at):
