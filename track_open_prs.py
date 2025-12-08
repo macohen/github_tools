@@ -10,7 +10,7 @@ from functools import lru_cache
 REPO_OWNER = os.getenv("GITHUB_REPO_OWNER", "awslabs")
 REPO_NAME = os.getenv("GITHUB_REPO_NAME", "aws-athena-query-federation")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-QUIP_TOKEN = os.getenv("QUIP_ACCESS_TOKEN")
+QUIP_TOKEN = os.getenv("QUIP_API_TOKEN")
 QUIP_DOC_ID = os.getenv("QUIP_DOC_ID")
 QUIP_BASE_URL = os.getenv("QUIP_BASE_URL", "https://platform.quip.com")
 
@@ -152,8 +152,7 @@ def publish_to_quip(markdown_content, title="PR Summary"):
         data = {
             "title": title,
             "content": markdown_content,
-            "format": "markdown",
-            "member_ids": "tpDFO7wadBk5"
+            "format": "markdown"
         }
 
     response = requests.post(url, headers=quip_headers, data=data)
@@ -213,6 +212,10 @@ def main():
     output = StringIO()
     print(f"**All Open PRs as of {report_date}", file=output)
     print(file=output)
+    print("🔴= 2 approvals needed to merge", file=output)
+    print("🟡= 1 approvals needed to merge", file=output)
+    print("🟢= Ready To Merge!!!", file=output)
+
     print(f"**{len(processed_prs)} total PRs, {unassigned_count} no reviewers, {older_than_30_days} open >30 days**\n", file=output)
     print("| PR | Age | Reviewers | Ready to Merge |", file=output)
     print("|---|---|---|---|", file=output)
