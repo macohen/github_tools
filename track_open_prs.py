@@ -1,6 +1,7 @@
 import requests
 import sys
 import os
+import argparse
 from datetime import datetime, timezone, timedelta
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -167,6 +168,10 @@ def publish_to_quip(markdown_content, title="PR Summary"):
         sys.exit(1)
 
 def main():
+    parser = argparse.ArgumentParser(description='Track open pull requests')
+    parser.add_argument('--skip-publish', action='store_true', help='Skip publishing to Quip')
+    args = parser.parse_args()
+    
     report_date = NOW.strftime('%Y-%m-%d')
     open_prs = fetch_prs("open")
     
@@ -225,7 +230,10 @@ def main():
         print(f"| [{pr['title']}]({pr['html_url']}) | {pr['age']} | {reviewer_list} | {pr['ready']} |", file=output)
 
     markdown_content = output.getvalue()
-    publish_to_quip(markdown_content, f"PR Summary: {REPO_OWNER}/{REPO_NAME}")
+    if not args.skip_publish:
+        publish_to_quip(markdown_content, f"PR Summary: {REPO_OWNER}/{REPO_NAME}")
+    else:
+        print(markdown_content)
 
 if __name__ == "__main__":
     main()
