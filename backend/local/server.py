@@ -345,6 +345,84 @@ def get_stats():
             error_response["traceback"] = traceback.format_exc()
         return jsonify(error_response), 500
 
+@app.route("/api/snapshots/<int:snapshot_id>/reviewers", methods=["GET"])
+def get_snapshot_reviewers(snapshot_id):
+    """Get reviewer workload for a specific snapshot"""
+    logger.info(f"GET /api/snapshots/{snapshot_id}/reviewers - Fetching reviewer stats")
+    
+    try:
+        conn = get_db()
+        
+        # Verify snapshot exists
+        snapshot = conn.execute(
+            "SELECT id FROM pr_snapshots WHERE id = $1",
+            [snapshot_id]
+        ).fetchone()
+        
+        if not snapshot:
+            logger.warning(f"Snapshot {snapshot_id} not found")
+            return jsonify({
+                "error": "Snapshot not found",
+                "message": f"Snapshot with ID {snapshot_id} does not exist"
+            }), 404
+        
+        # Get PRs for this snapshot
+        prs = conn.execute(
+            "SELECT id, reviewers FROM prs WHERE snapshot_id = $1 AND state = 'open'",
+            [snapshot_id]
+        ).fetchall()
+        
+        logger.debug(f"Processing {len(prs)} PRs for reviewer stats")
+        
+        # Count PRs and comments per reviewer
+        reviewer_data = {}
+        for pr_row in prs:
+            pr_id = pr_row[0]
+            reviewers_str = pr_row[1]
+            
+            if reviewers_str and reviewers_str != "None":
+                # Parse reviewers string like "user1 [APPROVED], user2 [NO ACTION]"
+                reviewers = reviewers_str.split(", ")
+                for reviewer in reviewers:
+                    # Extract username (before the bracket)
+                    username = reviewer.split(" [")[0].strip()
+                    if username:
+                        if username not in reviewer_data:
+                            reviewer_data[username] = {"count": 0, "comments": 0}
+                        reviewer_data[username]["count"] += 1
+                        
+                        # Get comment count for this reviewer on this PR
+                        comment_result = conn.execute(
+                            "SELECT comment_count FROM pr_comments WHERE pr_id = $1 AND reviewer = $2",
+                            [pr_id, username]
+                        ).fetchone()
+                        if comment_result:
+                            reviewer_data[username]["comments"] += comment_result[0]
+        
+        # Convert to list and sort by PR count
+        reviewer_stats = [
+            {"reviewer": name, "count": data["count"], "comments": data["comments"]}
+            for name, data in sorted(reviewer_data.items(), key=lambda x: x[1]["count"], reverse=True)
+        ]
+        
+        logger.info(f"Generated stats for {len(reviewer_stats)} reviewers from snapshot {snapshot_id}")
+        
+        if DB_PATH != ':memory:':
+            conn.close()
+        
+        return jsonify(reviewer_stats)
+        
+    except Exception as e:
+        logger.error(f"Error fetching reviewer stats for snapshot {snapshot_id}: {str(e)}", exc_info=True)
+        error_response = {
+            "error": str(e),
+            "message": f"Failed to fetch reviewer stats for snapshot {snapshot_id}"
+        }
+        if app.debug:
+            import traceback
+            error_response["traceback"] = traceback.format_exc()
+        return jsonify(error_response), 500
+
 @app.route("/api/import", methods=["POST"])
 def import_data():
     """Trigger the track_open_prs.py script to collect and store data"""

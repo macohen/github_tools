@@ -6,6 +6,7 @@ function App() {
   const [stats, setStats] = useState(null)
   const [snapshots, setSnapshots] = useState([])
   const [selectedSnapshot, setSelectedSnapshot] = useState(null)
+  const [selectedSnapshotReviewers, setSelectedSnapshotReviewers] = useState(null)
   const [prs, setPrs] = useState([])
   const [importing, setImporting] = useState(false)
   const [importMessage, setImportMessage] = useState(null)
@@ -66,14 +67,27 @@ function App() {
       if (res.ok) {
         setPrs(data)
         setSelectedSnapshot(snapshotId)
+        
+        // Also fetch reviewer stats for this snapshot
+        const reviewerRes = await fetch(`/api/snapshots/${snapshotId}/reviewers`)
+        const reviewerData = await reviewerRes.json()
+        
+        if (reviewerRes.ok) {
+          setSelectedSnapshotReviewers(reviewerData)
+        } else {
+          console.error('Failed to fetch reviewer stats:', reviewerData)
+          setSelectedSnapshotReviewers(null)
+        }
       } else {
         // Handle error response
         console.error('Failed to fetch PRs:', data)
         setPrs([])
+        setSelectedSnapshotReviewers(null)
       }
     } catch (error) {
       console.error('Error fetching PRs:', error)
       setPrs([])
+      setSelectedSnapshotReviewers(null)
     }
   }
 
@@ -240,6 +254,7 @@ function App() {
         if (selectedSnapshot === snapshotId) {
           setSelectedSnapshot(null)
           setPrs([])
+          setSelectedSnapshotReviewers(null)
         }
       } else {
         // Build detailed error message
@@ -342,10 +357,12 @@ function App() {
             <div className="chart-container">
               <h2>Current Reviewer Workload</h2>
               <p style={{ color: '#666', marginBottom: '15px' }}>
-                Number of open PRs assigned to each reviewer and total comments made
+                {selectedSnapshotReviewers 
+                  ? `Showing data for selected snapshot (ID: ${selectedSnapshot})`
+                  : 'Showing data from latest snapshot'}
               </p>
-              <ResponsiveContainer width="100%" height={Math.max(400, stats.reviewers.length * 40)}>
-                <BarChart data={stats.reviewers} layout="vertical" margin={{ left: 20 }}>
+              <ResponsiveContainer width="100%" height={Math.max(400, (selectedSnapshotReviewers || stats.reviewers).length * 40)}>
+                <BarChart data={selectedSnapshotReviewers || stats.reviewers} layout="vertical" margin={{ left: 20 }}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" />
                   <YAxis 

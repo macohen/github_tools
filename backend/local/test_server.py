@@ -242,6 +242,77 @@ class TestPRTrackerAPI(unittest.TestCase):
         data = json.loads(response.data)
         self.assertIn('error', data)
     
+    def test_get_snapshot_reviewers(self):
+        """Test getting reviewer stats for a specific snapshot"""
+        # Create a snapshot with multiple reviewers
+        snapshot_data = {
+            "repo_owner": "test-owner",
+            "repo_name": "test-repo",
+            "total_prs": 3,
+            "unassigned_count": 0,
+            "old_prs_count": 0,
+            "prs": [
+                {
+                    "number": 1,
+                    "title": "PR 1",
+                    "url": "https://github.com/test/pr/1",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-02T00:00:00Z",
+                    "age_days": 10,
+                    "reviewers": "alice [APPROVED], bob [NO ACTION]",
+                    "state": "open",
+                    "comments": [
+                        {"reviewer": "alice", "comment_count": 5},
+                        {"reviewer": "bob", "comment_count": 2}
+                    ]
+                },
+                {
+                    "number": 2,
+                    "title": "PR 2",
+                    "url": "https://github.com/test/pr/2",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-02T00:00:00Z",
+                    "age_days": 5,
+                    "reviewers": "alice [NO ACTION]",
+                    "state": "open",
+                    "comments": [
+                        {"reviewer": "alice", "comment_count": 3}
+                    ]
+                }
+            ]
+        }
+        
+        response = self.client.post('/api/snapshots',
+                                   data=json.dumps(snapshot_data),
+                                   content_type='application/json')
+        self.assertEqual(response.status_code, 201)
+        snapshot_id = json.loads(response.data)['snapshot_id']
+        
+        # Get reviewer stats for this snapshot
+        response = self.client.get(f'/api/snapshots/{snapshot_id}/reviewers')
+        self.assertEqual(response.status_code, 200)
+        reviewers = json.loads(response.data)
+        
+        # Should have 2 reviewers
+        self.assertEqual(len(reviewers), 2)
+        
+        # Alice should have 2 PRs and 8 comments
+        alice = next(r for r in reviewers if r['reviewer'] == 'alice')
+        self.assertEqual(alice['count'], 2)
+        self.assertEqual(alice['comments'], 8)
+        
+        # Bob should have 1 PR and 2 comments
+        bob = next(r for r in reviewers if r['reviewer'] == 'bob')
+        self.assertEqual(bob['count'], 1)
+        self.assertEqual(bob['comments'], 2)
+    
+    def test_get_reviewers_nonexistent_snapshot(self):
+        """Test getting reviewer stats for a snapshot that doesn't exist"""
+        response = self.client.get('/api/snapshots/99999/reviewers')
+        self.assertEqual(response.status_code, 404)
+        data = json.loads(response.data)
+        self.assertIn('error', data)
+    
     def _create_test_snapshot(self):
         """Helper method to create a test snapshot"""
         snapshot_data = {
