@@ -126,6 +126,49 @@ body {
   border-bottom: none;
 }
 
+.snapshot-item {
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.snapshot-item:hover {
+  background-color: #f8f9fa;
+}
+
+.snapshot-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+}
+
+.delete-button {
+  background: #dc3545;
+  color: white;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s;
+}
+
+.delete-button:hover:not(:disabled) {
+  background: #c82333;
+}
+
+.delete-button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  font-size: 12px;
+}
+
 .pr-title {
   font-weight: 500;
   margin-bottom: 5px;

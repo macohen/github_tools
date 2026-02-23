@@ -192,6 +192,56 @@ class TestPRTrackerAPI(unittest.TestCase):
         self.assertEqual(data['reviewers'][0]['count'], 2)
         self.assertEqual(data['reviewers'][0]['comments'], 10)
     
+    def test_delete_snapshot(self):
+        """Test deleting a snapshot"""
+        # Create a snapshot first
+        snapshot_data = {
+            "repo_owner": "test-owner",
+            "repo_name": "test-repo",
+            "total_prs": 5,
+            "unassigned_count": 1,
+            "old_prs_count": 2,
+            "prs": [
+                {
+                    "number": 123,
+                    "title": "Test PR",
+                    "url": "https://github.com/test/pr/123",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-02T00:00:00Z",
+                    "age_days": 10,
+                    "reviewers": "user1 [APPROVED]",
+                    "state": "open",
+                    "comments": [
+                        {"reviewer": "user1", "comment_count": 5}
+                    ]
+                }
+            ]
+        }
+        
+        response = self.client.post('/api/snapshots',
+                                   data=json.dumps(snapshot_data),
+                                   content_type='application/json')
+        self.assertEqual(response.status_code, 201)
+        snapshot_id = json.loads(response.data)['snapshot_id']
+        
+        # Delete the snapshot
+        response = self.client.delete(f'/api/snapshots/{snapshot_id}')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data['success'])
+        
+        # Verify snapshot is deleted
+        response = self.client.get('/api/snapshots')
+        snapshots = json.loads(response.data)
+        self.assertEqual(len(snapshots), 0)
+    
+    def test_delete_nonexistent_snapshot(self):
+        """Test deleting a snapshot that doesn't exist"""
+        response = self.client.delete('/api/snapshots/99999')
+        self.assertEqual(response.status_code, 404)
+        data = json.loads(response.data)
+        self.assertIn('error', data)
+    
     def _create_test_snapshot(self):
         """Helper method to create a test snapshot"""
         snapshot_data = {

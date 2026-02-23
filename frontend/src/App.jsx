@@ -9,6 +9,7 @@ function App() {
   const [prs, setPrs] = useState([])
   const [importing, setImporting] = useState(false)
   const [importMessage, setImportMessage] = useState(null)
+  const [deletingSnapshot, setDeletingSnapshot] = useState(null)
   
   // Historical import state
   const [startDate, setStartDate] = useState('2025-12-22')
@@ -217,6 +218,50 @@ function App() {
     }
   }
 
+  const handleDeleteSnapshot = async (snapshotId, event) => {
+    event.stopPropagation() // Prevent triggering the snapshot click
+    
+    if (!confirm('Are you sure you want to delete this snapshot? This will also delete all associated PRs and comments.')) {
+      return
+    }
+    
+    setDeletingSnapshot(snapshotId)
+    
+    try {
+      const res = await fetch(`/api/snapshots/${snapshotId}`, { method: 'DELETE' })
+      const data = await res.json()
+      
+      if (res.ok) {
+        // Refresh snapshots list and stats
+        await fetchSnapshots()
+        await fetchStats()
+        
+        // Clear selected snapshot if it was deleted
+        if (selectedSnapshot === snapshotId) {
+          setSelectedSnapshot(null)
+          setPrs([])
+        }
+      } else {
+        // Build detailed error message
+        let errorText = data.message || 'Failed to delete snapshot'
+        
+        if (data.error) {
+          errorText += '\n\nError: ' + data.error
+        }
+        
+        if (data.traceback) {
+          errorText += '\n\nStack trace:\n' + data.traceback
+        }
+        
+        alert(errorText)
+      }
+    } catch (error) {
+      alert(`Error deleting snapshot: ${error.message}`)
+    } finally {
+      setDeletingSnapshot(null)
+    }
+  }
+
   return (
     <div className="container">
       <div className="header">
@@ -324,15 +369,26 @@ function App() {
             {snapshots.map(snapshot => (
               <div 
                 key={snapshot.id} 
-                className="pr-item"
-                style={{ cursor: 'pointer' }}
+                className="pr-item snapshot-item"
                 onClick={() => fetchPRs(snapshot.id)}
               >
-                <div className="pr-title">
-                  {new Date(snapshot.snapshot_date).toLocaleString()} - {snapshot.repo_owner}/{snapshot.repo_name}
-                </div>
-                <div className="pr-meta">
-                  {snapshot.total_prs} PRs | {snapshot.unassigned_count} unassigned | {snapshot.old_prs_count} old
+                <div className="snapshot-content">
+                  <div>
+                    <div className="pr-title">
+                      {new Date(snapshot.snapshot_date).toLocaleString()} - {snapshot.repo_owner}/{snapshot.repo_name}
+                    </div>
+                    <div className="pr-meta">
+                      {snapshot.total_prs} PRs | {snapshot.unassigned_count} unassigned | {snapshot.old_prs_count} old
+                    </div>
+                  </div>
+                  <button
+                    className="delete-button"
+                    onClick={(e) => handleDeleteSnapshot(snapshot.id, e)}
+                    disabled={deletingSnapshot === snapshot.id}
+                    title="Delete snapshot"
+                  >
+                    {deletingSnapshot === snapshot.id ? 'Deleting...' : '×'}
+                  </button>
                 </div>
               </div>
             ))}

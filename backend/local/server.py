@@ -125,6 +125,69 @@ def get_snapshot_prs(snapshot_id):
             error_response["traceback"] = traceback.format_exc()
         return jsonify(error_response), 500
 
+@app.route("/api/snapshots/<int:snapshot_id>", methods=["DELETE"])
+def delete_snapshot(snapshot_id):
+    """Delete a snapshot and all associated PRs and comments"""
+    logger.info(f"DELETE /api/snapshots/{snapshot_id} - Deleting snapshot")
+    
+    try:
+        conn = get_db()
+        
+        # Check if snapshot exists
+        snapshot = conn.execute(
+            "SELECT id FROM pr_snapshots WHERE id = $1",
+            [snapshot_id]
+        ).fetchone()
+        
+        if not snapshot:
+            logger.warning(f"Snapshot {snapshot_id} not found")
+            return jsonify({
+                "error": "Snapshot not found",
+                "message": f"Snapshot with ID {snapshot_id} does not exist"
+            }), 404
+        
+        # Manually delete in correct order: comments -> prs -> snapshot
+        # First, delete all comments for PRs in this snapshot
+        conn.execute("""
+            DELETE FROM pr_comments 
+            WHERE pr_id IN (
+                SELECT id FROM prs WHERE snapshot_id = $1
+            )
+        """, [snapshot_id])
+        
+        # Then delete all PRs for this snapshot
+        conn.execute(
+            "DELETE FROM prs WHERE snapshot_id = $1",
+            [snapshot_id]
+        )
+        
+        # Finally delete the snapshot itself
+        conn.execute(
+            "DELETE FROM pr_snapshots WHERE id = $1",
+            [snapshot_id]
+        )
+        
+        if DB_PATH != ':memory:':
+            conn.close()
+        
+        logger.info(f"Successfully deleted snapshot {snapshot_id}")
+        return jsonify({
+            "success": True,
+            "message": f"Snapshot {snapshot_id} deleted successfully"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error deleting snapshot {snapshot_id}: {str(e)}", exc_info=True)
+        error_response = {
+            "error": str(e),
+            "message": f"Failed to delete snapshot {snapshot_id}"
+        }
+        # In debug mode, include stack trace
+        if app.debug:
+            import traceback
+            error_response["traceback"] = traceback.format_exc()
+        return jsonify(error_response), 500
+
 @app.route("/api/snapshots", methods=["POST"])
 def create_snapshot():
     data = request.json
