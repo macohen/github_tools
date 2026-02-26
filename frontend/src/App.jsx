@@ -11,6 +11,14 @@ function App() {
   const [importing, setImporting] = useState(false)
   const [importMessage, setImportMessage] = useState(null)
   const [deletingSnapshot, setDeletingSnapshot] = useState(null)
+  const [showUnassignedPRs, setShowUnassignedPRs] = useState(false)
+  const [approvalFilter, setApprovalFilter] = useState('all') // 'all', 'green', 'yellow', 'red'
+  
+  // Comparison state
+  const [compareSnapshot1, setCompareSnapshot1] = useState(null)
+  const [compareSnapshot2, setCompareSnapshot2] = useState(null)
+  const [comparisonResult, setComparisonResult] = useState(null)
+  const [comparing, setComparing] = useState(false)
   
   // Historical import state
   const [startDate, setStartDate] = useState('2025-12-22')
@@ -277,6 +285,36 @@ function App() {
     }
   }
 
+  const handleCompareSnapshots = async () => {
+    if (!compareSnapshot1 || !compareSnapshot2) {
+      alert('Please select two snapshots to compare')
+      return
+    }
+    
+    if (compareSnapshot1 === compareSnapshot2) {
+      alert('Please select two different snapshots')
+      return
+    }
+    
+    setComparing(true)
+    setComparisonResult(null)
+    
+    try {
+      const res = await fetch(`/api/snapshots/compare?snapshot1=${compareSnapshot1}&snapshot2=${compareSnapshot2}`)
+      const data = await res.json()
+      
+      if (res.ok) {
+        setComparisonResult(data)
+      } else {
+        alert(`Comparison failed: ${data.message || 'Unknown error'}`)
+      }
+    } catch (error) {
+      alert(`Error comparing snapshots: ${error.message}`)
+    } finally {
+      setComparing(false)
+    }
+  }
+
   return (
     <div className="container">
       <div className="header">
@@ -289,6 +327,12 @@ function App() {
           onClick={() => setActiveTab('dashboard')}
         >
           Dashboard
+        </button>
+        <button 
+          className={`tab ${activeTab === 'compare' ? 'active' : ''}`}
+          onClick={() => setActiveTab('compare')}
+        >
+          Compare Snapshots
         </button>
         <button 
           className={`tab ${activeTab === 'historical' ? 'active' : ''}`}
@@ -332,26 +376,6 @@ function App() {
             </div>
           )}
 
-          {stats?.trend && stats.trend.length > 0 && (
-            <div className="chart-container">
-              <h2>30-Day Trend</h2>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={stats.trend}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="snapshot_date" 
-                    tickFormatter={(date) => new Date(date).toLocaleDateString()}
-                  />
-                  <YAxis />
-                  <Tooltip labelFormatter={(date) => new Date(date).toLocaleString()} />
-                  <Legend />
-                  <Line type="monotone" dataKey="total_prs" stroke="#0066cc" name="Total PRs" />
-                  <Line type="monotone" dataKey="unassigned_count" stroke="#ff6b6b" name="Unassigned" />
-                  <Line type="monotone" dataKey="old_prs_count" stroke="#ffa500" name="Old PRs" />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
 
           {stats?.reviewers && stats.reviewers.length > 0 && (
             <div className="chart-container">
@@ -361,8 +385,13 @@ function App() {
                   ? `Showing data for selected snapshot (ID: ${selectedSnapshot})`
                   : 'Showing data from latest snapshot'}
               </p>
-              <ResponsiveContainer width="100%" height={Math.max(400, (selectedSnapshotReviewers || stats.reviewers).length * 40)}>
-                <BarChart data={selectedSnapshotReviewers || stats.reviewers} layout="vertical" margin={{ left: 20 }}>
+              <ResponsiveContainer width="100%" height={Math.max(500, (selectedSnapshotReviewers || stats.reviewers).length * 60)}>
+                <BarChart 
+                  data={selectedSnapshotReviewers || stats.reviewers} 
+                  layout="vertical" 
+                  margin={{ left: 20, top: 20, bottom: 20 }}
+                  barCategoryGap="20%"
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis type="number" />
                   <YAxis 
@@ -370,12 +399,13 @@ function App() {
                     type="category" 
                     width={150}
                     interval={0}
-                    tick={{ fontSize: 12 }}
+                    tick={{ fontSize: 13 }}
                   />
                   <Tooltip />
                   <Legend />
                   <Bar dataKey="count" fill="#0066cc" name="PRs Assigned" />
                   <Bar dataKey="comments" fill="#ffa500" name="Comments Made" />
+                  <Bar dataKey="approvals" fill="#28a745" name="Approvals Given" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -413,22 +443,257 @@ function App() {
 
           {selectedSnapshot && prs.length > 0 && (
             <div className="pr-list">
-              <h2>PRs in Snapshot</h2>
-              {prs.map(pr => (
-                <div key={pr.id} className="pr-item">
-                  <div className="pr-title">
-                    <a href={pr.url} target="_blank" rel="noopener noreferrer">
-                      {pr.title}
-                    </a>
-                  </div>
-                  <div className="pr-meta">
-                    Age: {pr.age_days} days | Reviewers: {pr.reviewers || 'None'}
-                  </div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' }}>
+                <h2 style={{ margin: 0 }}>PRs in Snapshot</h2>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={() => setApprovalFilter('all')}
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '14px',
+                      backgroundColor: approvalFilter === 'all' ? '#0066cc' : '#f0f0f0',
+                      color: approvalFilter === 'all' ? 'white' : '#333',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    All
+                  </button>
+                  <button
+                    onClick={() => setApprovalFilter('green')}
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '14px',
+                      backgroundColor: approvalFilter === 'green' ? '#28a745' : '#f0f0f0',
+                      color: approvalFilter === 'green' ? 'white' : '#333',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🟢 Ready
+                  </button>
+                  <button
+                    onClick={() => setApprovalFilter('yellow')}
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '14px',
+                      backgroundColor: approvalFilter === 'yellow' ? '#ffa500' : '#f0f0f0',
+                      color: approvalFilter === 'yellow' ? 'white' : '#333',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🟡 Partial
+                  </button>
+                  <button
+                    onClick={() => setApprovalFilter('red')}
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '14px',
+                      backgroundColor: approvalFilter === 'red' ? '#dc3545' : '#f0f0f0',
+                      color: approvalFilter === 'red' ? 'white' : '#333',
+                      border: 'none',
+                      borderRadius: '4px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    🔴 Needs Review
+                  </button>
                 </div>
-              ))}
+              </div>
+              {prs
+                .filter(pr => {
+                  // Apply approval filter
+                  if (approvalFilter === 'all') return true;
+                  
+                  const approvalCount = pr.reviewers 
+                    ? (pr.reviewers.match(/\[APPROVED\]/g) || []).length 
+                    : 0;
+                  
+                  if (approvalFilter === 'green') return approvalCount >= 2;
+                  if (approvalFilter === 'yellow') return approvalCount === 1;
+                  if (approvalFilter === 'red') return approvalCount === 0;
+                  
+                  return true;
+                })
+                .map(pr => {
+                // Count approvals
+                const approvalCount = pr.reviewers 
+                  ? (pr.reviewers.match(/\[APPROVED\]/g) || []).length 
+                  : 0;
+                
+                // Determine traffic light color
+                let trafficLight = '🔴'; // Red - no approvals
+                if (approvalCount >= 2) {
+                  trafficLight = '🟢'; // Green - ready to merge
+                } else if (approvalCount === 1) {
+                  trafficLight = '🟡'; // Yellow - one approval
+                }
+                
+                return (
+                  <div key={pr.id} className="pr-item">
+                    <div className="pr-title">
+                      <span style={{ marginRight: '8px', fontSize: '18px' }}>{trafficLight}</span>
+                      <a href={pr.url} target="_blank" rel="noopener noreferrer">
+                        {pr.title}
+                      </a>
+                    </div>
+                    <div className="pr-meta">
+                      Age: {pr.age_days} days | Reviewers: {pr.reviewers || 'None'}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </>
+      )}
+
+      {activeTab === 'compare' && (
+        <div className="comparison-view">
+          <h2>Compare Snapshots</h2>
+          <p style={{ color: '#666', marginBottom: '20px' }}>
+            Select two snapshots to see what changed between them
+          </p>
+
+          <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+                Snapshot 1 (Earlier)
+              </label>
+              <select
+                value={compareSnapshot1 || ''}
+                onChange={(e) => setCompareSnapshot1(Number(e.target.value))}
+                style={{ width: '100%', padding: '8px', fontSize: '14px' }}
+              >
+                <option value="">Select snapshot...</option>
+                {snapshots.map(snapshot => (
+                  <option key={snapshot.id} value={snapshot.id}>
+                    {new Date(snapshot.snapshot_date).toLocaleString()} - {snapshot.repo_owner}/{snapshot.repo_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ flex: 1 }}>
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>
+                Snapshot 2 (Later)
+              </label>
+              <select
+                value={compareSnapshot2 || ''}
+                onChange={(e) => setCompareSnapshot2(Number(e.target.value))}
+                style={{ width: '100%', padding: '8px', fontSize: '14px' }}
+              >
+                <option value="">Select snapshot...</option>
+                {snapshots.map(snapshot => (
+                  <option key={snapshot.id} value={snapshot.id}>
+                    {new Date(snapshot.snapshot_date).toLocaleString()} - {snapshot.repo_owner}/{snapshot.repo_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <button
+            onClick={handleCompareSnapshots}
+            disabled={comparing || !compareSnapshot1 || !compareSnapshot2}
+            className="import-button"
+            style={{ marginBottom: '20px' }}
+          >
+            {comparing ? 'Comparing...' : 'Compare Snapshots'}
+          </button>
+
+          {comparisonResult && (
+            <div>
+              <div className="stats-grid" style={{ marginBottom: '30px' }}>
+                <div className="stat-card">
+                  <div className="stat-value">{comparisonResult.summary.new_count}</div>
+                  <div className="stat-label">New PRs</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{comparisonResult.summary.closed_count}</div>
+                  <div className="stat-label">Closed PRs</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{comparisonResult.summary.status_changed_count}</div>
+                  <div className="stat-label">Status Changed</div>
+                </div>
+                <div className="stat-card">
+                  <div className="stat-value">{comparisonResult.summary.unchanged_count}</div>
+                  <div className="stat-label">Unchanged</div>
+                </div>
+              </div>
+
+              {comparisonResult.new_prs.length > 0 && (
+                <div className="pr-list" style={{ marginBottom: '30px' }}>
+                  <h3>🆕 New PRs ({comparisonResult.new_prs.length})</h3>
+                  {comparisonResult.new_prs.map(pr => (
+                    <div key={pr.pr_number} className="pr-item">
+                      <div className="pr-title">
+                        <span style={{ marginRight: '8px', fontSize: '18px' }}>
+                          {pr.color === 'green' ? '🟢' : pr.color === 'yellow' ? '🟡' : '🔴'}
+                        </span>
+                        <a href={pr.url} target="_blank" rel="noopener noreferrer">
+                          {pr.title}
+                        </a>
+                      </div>
+                      <div className="pr-meta">
+                        Age: {pr.age_days} days | Reviewers: {pr.reviewers || 'None'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {comparisonResult.status_changed.length > 0 && (
+                <div className="pr-list" style={{ marginBottom: '30px' }}>
+                  <h3>🔄 Status Changed ({comparisonResult.status_changed.length})</h3>
+                  {comparisonResult.status_changed.map(pr => (
+                    <div key={pr.pr_number} className="pr-item">
+                      <div className="pr-title">
+                        <span style={{ marginRight: '8px', fontSize: '18px' }}>
+                          {pr.color_before === 'green' ? '🟢' : pr.color_before === 'yellow' ? '🟡' : '🔴'}
+                          →
+                          {pr.color_after === 'green' ? '🟢' : pr.color_after === 'yellow' ? '🟡' : '🔴'}
+                        </span>
+                        <a href={pr.url} target="_blank" rel="noopener noreferrer">
+                          {pr.title}
+                        </a>
+                      </div>
+                      <div className="pr-meta">
+                        Age: {pr.age_days} days | Approvals: {pr.approval_count_before} → {pr.approval_count_after} | Reviewers: {pr.reviewers || 'None'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {comparisonResult.closed_prs.length > 0 && (
+                <div className="pr-list" style={{ marginBottom: '30px' }}>
+                  <h3>✅ Closed PRs ({comparisonResult.closed_prs.length})</h3>
+                  {comparisonResult.closed_prs.map(pr => (
+                    <div key={pr.pr_number} className="pr-item">
+                      <div className="pr-title">
+                        <span style={{ marginRight: '8px', fontSize: '18px' }}>
+                          {pr.color === 'green' ? '🟢' : pr.color === 'yellow' ? '🟡' : '🔴'}
+                        </span>
+                        <a href={pr.url} target="_blank" rel="noopener noreferrer">
+                          {pr.title}
+                        </a>
+                      </div>
+                      <div className="pr-meta">
+                        Age: {pr.age_days} days | Reviewers: {pr.reviewers || 'None'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {activeTab === 'historical' && (
