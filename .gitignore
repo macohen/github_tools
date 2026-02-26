@@ -42,3 +42,9 @@ Thumbs.db
 # Project specific
 .python-version
 track_prs.py~
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+*.lcov
