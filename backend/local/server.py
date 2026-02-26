@@ -256,7 +256,27 @@ def create_snapshot():
 
 @app.route("/api/stats", methods=["GET"])
 def get_stats():
-    logger.info("GET /api/stats - Fetching statistics")
+    # Get threshold parameter with default value of 30
+    threshold_str = request.args.get("threshold", None)
+    
+    # If threshold is provided, validate it
+    if threshold_str is not None:
+        try:
+            threshold = int(threshold_str)
+            if threshold <= 0:
+                logger.warning(f"Invalid threshold parameter: {threshold}")
+                return jsonify({
+                    "error": "threshold must be a positive integer"
+                }), 400
+        except (ValueError, TypeError):
+            logger.warning(f"Non-numeric threshold parameter: {threshold_str}")
+            return jsonify({
+                "error": "threshold must be a positive integer"
+            }), 400
+    else:
+        threshold = 30  # Default value
+    
+    logger.info(f"GET /api/stats - Fetching statistics with threshold={threshold}")
     
     try:
         conn = get_db()
@@ -272,14 +292,53 @@ def get_stats():
             latest_dict = None
             logger.info("No snapshots found")
         
+        # Calculate trend metrics using SQL with CTEs
         trend = conn.execute(
-            """SELECT snapshot_date, total_prs, unassigned_count, old_prs_count
-               FROM pr_snapshots 
-               WHERE snapshot_date >= current_timestamp - INTERVAL '30 DAYS'
-               ORDER BY snapshot_date ASC"""
+            """
+            WITH snapshot_dates AS (
+                SELECT 
+                    id AS snapshot_id,
+                    snapshot_date,
+                    repo_owner,
+                    repo_name
+                FROM pr_snapshots
+                WHERE snapshot_date >= current_timestamp - INTERVAL '30 DAYS'
+                ORDER BY snapshot_date ASC
+            ),
+            pr_metrics AS (
+                SELECT 
+                    p.snapshot_id,
+                    COUNT(*) AS total_prs,
+                    SUM(CASE 
+                        WHEN p.reviewers IS NOT NULL AND p.reviewers != 'None' 
+                        THEN 1 ELSE 0 
+                    END) AS under_review_count,
+                    SUM(CASE 
+                        WHEN (LENGTH(p.reviewers) - LENGTH(REPLACE(p.reviewers, '[APPROVED]', ''))) / LENGTH('[APPROVED]') >= 2
+                        THEN 1 ELSE 0 
+                    END) AS two_approvals_count,
+                    SUM(CASE 
+                        WHEN p.age_days > $1
+                        THEN 1 ELSE 0 
+                    END) AS old_prs_count
+                FROM prs p
+                WHERE p.state = 'open'
+                GROUP BY p.snapshot_id
+            )
+            SELECT 
+                sd.snapshot_date,
+                COALESCE(pm.total_prs, 0) AS total_prs,
+                COALESCE(pm.under_review_count, 0) AS under_review_count,
+                COALESCE(pm.two_approvals_count, 0) AS two_approvals_count,
+                COALESCE(pm.old_prs_count, 0) AS old_prs_count
+            FROM snapshot_dates sd
+            LEFT JOIN pr_metrics pm ON sd.snapshot_id = pm.snapshot_id
+            ORDER BY sd.snapshot_date ASC
+            """,
+            [threshold]
         ).fetchall()
         
-        logger.info(f"Found {len(trend)} trend data points")
+        logger.info(f"Found {len(trend)} trend data points with threshold={threshold}")
         trend_columns = [desc[0] for desc in conn.description]
         trend_list = [dict(zip(trend_columns, row)) for row in trend]
         
@@ -303,12 +362,19 @@ def get_stats():
                     # Parse reviewers string like "user1 [APPROVED], user2 [NO ACTION]"
                     reviewers = reviewers_str.split(", ")
                     for reviewer in reviewers:
-                        # Extract username (before the bracket)
-                        username = reviewer.split(" [")[0].strip()
+                        # Extract username (before the bracket) and status
+                        parts = reviewer.split(" [")
+                        username = parts[0].strip()
+                        status = parts[1].rstrip("]") if len(parts) > 1 else ""
+                        
                         if username:
                             if username not in reviewer_data:
-                                reviewer_data[username] = {"count": 0, "comments": 0}
+                                reviewer_data[username] = {"count": 0, "comments": 0, "approvals": 0}
                             reviewer_data[username]["count"] += 1
+                            
+                            # Count approvals
+                            if status == "APPROVED":
+                                reviewer_data[username]["approvals"] += 1
                             
                             # Get comment count for this reviewer on this PR
                             comment_result = conn.execute(
@@ -320,7 +386,7 @@ def get_stats():
             
             # Convert to list and sort by PR count
             reviewer_stats = [
-                {"reviewer": name, "count": data["count"], "comments": data["comments"]}
+                {"reviewer": name, "count": data["count"], "comments": data["comments"], "approvals": data["approvals"]}
                 for name, data in sorted(reviewer_data.items(), key=lambda x: x[1]["count"], reverse=True)
             ]
             
@@ -384,12 +450,19 @@ def get_snapshot_reviewers(snapshot_id):
                 # Parse reviewers string like "user1 [APPROVED], user2 [NO ACTION]"
                 reviewers = reviewers_str.split(", ")
                 for reviewer in reviewers:
-                    # Extract username (before the bracket)
-                    username = reviewer.split(" [")[0].strip()
+                    # Extract username (before the bracket) and status
+                    parts = reviewer.split(" [")
+                    username = parts[0].strip()
+                    status = parts[1].rstrip("]") if len(parts) > 1 else ""
+                    
                     if username:
                         if username not in reviewer_data:
-                            reviewer_data[username] = {"count": 0, "comments": 0}
+                            reviewer_data[username] = {"count": 0, "comments": 0, "approvals": 0}
                         reviewer_data[username]["count"] += 1
+                        
+                        # Count approvals
+                        if status == "APPROVED":
+                            reviewer_data[username]["approvals"] += 1
                         
                         # Get comment count for this reviewer on this PR
                         comment_result = conn.execute(
@@ -401,7 +474,7 @@ def get_snapshot_reviewers(snapshot_id):
         
         # Convert to list and sort by PR count
         reviewer_stats = [
-            {"reviewer": name, "count": data["count"], "comments": data["comments"]}
+            {"reviewer": name, "count": data["count"], "comments": data["comments"], "approvals": data["approvals"]}
             for name, data in sorted(reviewer_data.items(), key=lambda x: x[1]["count"], reverse=True)
         ]
         
@@ -417,6 +490,142 @@ def get_snapshot_reviewers(snapshot_id):
         error_response = {
             "error": str(e),
             "message": f"Failed to fetch reviewer stats for snapshot {snapshot_id}"
+        }
+        if app.debug:
+            import traceback
+            error_response["traceback"] = traceback.format_exc()
+        return jsonify(error_response), 500
+
+@app.route("/api/snapshots/compare", methods=["GET"])
+def compare_snapshots():
+    """Compare two snapshots to identify new, closed, and status-changed PRs"""
+    snapshot1_id = request.args.get("snapshot1", type=int)
+    snapshot2_id = request.args.get("snapshot2", type=int)
+    
+    if not snapshot1_id or not snapshot2_id:
+        return jsonify({
+            "error": "Both snapshot1 and snapshot2 parameters are required"
+        }), 400
+    
+    logger.info(f"GET /api/snapshots/compare - Comparing snapshots {snapshot1_id} and {snapshot2_id}")
+    
+    try:
+        conn = get_db()
+        
+        # Fetch PRs from both snapshots
+        prs1 = conn.execute(
+            "SELECT pr_number, title, url, reviewers, age_days FROM prs WHERE snapshot_id = $1 AND state = 'open'",
+            [snapshot1_id]
+        ).fetchall()
+        
+        prs2 = conn.execute(
+            "SELECT pr_number, title, url, reviewers, age_days FROM prs WHERE snapshot_id = $1 AND state = 'open'",
+            [snapshot2_id]
+        ).fetchall()
+        
+        # Convert to dicts for easier processing
+        prs1_dict = {pr[0]: {"pr_number": pr[0], "title": pr[1], "url": pr[2], "reviewers": pr[3], "age_days": pr[4]} for pr in prs1}
+        prs2_dict = {pr[0]: {"pr_number": pr[0], "title": pr[1], "url": pr[2], "reviewers": pr[3], "age_days": pr[4]} for pr in prs2}
+        
+        def get_approval_count(reviewers_str):
+            if not reviewers_str or reviewers_str == "None":
+                return 0
+            return len([r for r in reviewers_str.split(", ") if "[APPROVED]" in r])
+        
+        def get_color(approval_count):
+            if approval_count >= 2:
+                return "green"
+            elif approval_count == 1:
+                return "yellow"
+            else:
+                return "red"
+        
+        # Find new PRs (in snapshot2 but not in snapshot1)
+        new_prs = []
+        for pr_num, pr_data in prs2_dict.items():
+            if pr_num not in prs1_dict:
+                approval_count = get_approval_count(pr_data["reviewers"])
+                new_prs.append({
+                    **pr_data,
+                    "approval_count": approval_count,
+                    "color": get_color(approval_count)
+                })
+        
+        # Find closed PRs (in snapshot1 but not in snapshot2)
+        closed_prs = []
+        for pr_num, pr_data in prs1_dict.items():
+            if pr_num not in prs2_dict:
+                approval_count = get_approval_count(pr_data["reviewers"])
+                closed_prs.append({
+                    **pr_data,
+                    "approval_count": approval_count,
+                    "color": get_color(approval_count)
+                })
+        
+        # Find status-changed PRs (in both but different approval status)
+        status_changed = []
+        unchanged = []
+        for pr_num, pr_data2 in prs2_dict.items():
+            if pr_num in prs1_dict:
+                pr_data1 = prs1_dict[pr_num]
+                approval_count1 = get_approval_count(pr_data1["reviewers"])
+                approval_count2 = get_approval_count(pr_data2["reviewers"])
+                color1 = get_color(approval_count1)
+                color2 = get_color(approval_count2)
+                
+                if color1 != color2:
+                    status_changed.append({
+                        **pr_data2,
+                        "approval_count_before": approval_count1,
+                        "approval_count_after": approval_count2,
+                        "color_before": color1,
+                        "color_after": color2
+                    })
+                else:
+                    unchanged.append({
+                        **pr_data2,
+                        "approval_count": approval_count2,
+                        "color": color2
+                    })
+        
+        # Get snapshot metadata
+        snapshot1 = conn.execute("SELECT snapshot_date, repo_owner, repo_name FROM pr_snapshots WHERE id = $1", [snapshot1_id]).fetchone()
+        snapshot2 = conn.execute("SELECT snapshot_date, repo_owner, repo_name FROM pr_snapshots WHERE id = $1", [snapshot2_id]).fetchone()
+        
+        if DB_PATH != ':memory:':
+            conn.close()
+        
+        result = {
+            "snapshot1": {
+                "id": snapshot1_id,
+                "date": snapshot1[0] if snapshot1 else None,
+                "repo": f"{snapshot1[1]}/{snapshot1[2]}" if snapshot1 else None
+            },
+            "snapshot2": {
+                "id": snapshot2_id,
+                "date": snapshot2[0] if snapshot2 else None,
+                "repo": f"{snapshot2[1]}/{snapshot2[2]}" if snapshot2 else None
+            },
+            "new_prs": new_prs,
+            "closed_prs": closed_prs,
+            "status_changed": status_changed,
+            "unchanged": unchanged,
+            "summary": {
+                "new_count": len(new_prs),
+                "closed_count": len(closed_prs),
+                "status_changed_count": len(status_changed),
+                "unchanged_count": len(unchanged)
+            }
+        }
+        
+        logger.info(f"Comparison complete: {len(new_prs)} new, {len(closed_prs)} closed, {len(status_changed)} changed")
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Error comparing snapshots: {str(e)}", exc_info=True)
+        error_response = {
+            "error": str(e),
+            "message": "Failed to compare snapshots"
         }
         if app.debug:
             import traceback
@@ -628,5 +837,5 @@ if __name__ == "__main__":
         logger.info("Database not found, initializing...")
         init_db()
     
-    logger.info("Starting Flask server on port 5000")
-    app.run(debug=True, port=5000)
+    logger.info("Starting Flask server on port 5001")
+    app.run(debug=True, port=5001)
