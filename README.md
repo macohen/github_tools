@@ -36,6 +36,42 @@ A web application to track and visualize GitHub pull request metrics over time.
     └── index.html
 ```
 
+## Security
+
+### Environment Variables
+
+This application requires sensitive credentials that should never be committed to git:
+
+1. **Copy the example environment file:**
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Edit `.env` and add your credentials:**
+   - `GITHUB_TOKEN` - Create a personal access token at https://github.com/settings/tokens
+     - For public repos: `public_repo` scope
+     - For private repos: `repo` scope
+   - Never commit your `.env` file (it's already in `.gitignore`)
+
+3. **Load environment variables:**
+   ```bash
+   # Option 1: Export manually
+   export GITHUB_TOKEN="your_token_here"
+   
+   # Option 2: Use a tool like direnv or python-dotenv
+   source .env
+   ```
+
+### Security Best Practices
+
+- ✅ Use read-only GitHub tokens when possible
+- ✅ Rotate tokens regularly
+- ✅ Never commit tokens or `.env` files to git
+- ✅ Use environment-specific tokens (dev vs prod)
+- ⚠️ In production, disable Flask debug mode
+- ⚠️ In production, restrict CORS to specific origins
+- ⚠️ Use HTTPS in production deployments
+
 ## Setup
 
 ### Backend (Local Development)
@@ -48,7 +84,9 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. Initialize and start the local server:
+2. Set up environment variables (see Security section above)
+
+3. Initialize and start the local server:
 ```bash
 cd local
 python server.py
