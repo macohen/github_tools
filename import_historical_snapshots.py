@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 REPO = os.environ.get("GITHUB_REPO", "awslabs/aws-athena-query-federation")
-API_URL = os.environ.get("API_URL", "http://localhost:5000/api")
+API_URL = os.environ.get("API_URL", "http://localhost:5001/api")
 DB_PATH = os.environ.get("DB_PATH", "backend/local/pr_tracker.duckdb")
 
 if not GITHUB_TOKEN:
@@ -37,12 +37,14 @@ def check_snapshot_exists(date_str: str) -> bool:
         conn = duckdb.connect(DB_PATH)
         
         # Check if snapshot exists for this date (within same day)
+        # Use explicit CAST to ensure proper type conversion
         result = conn.execute("""
             SELECT COUNT(*) FROM pr_snapshots 
-            WHERE DATE(snapshot_date) = DATE($1)
+            WHERE DATE(snapshot_date) = CAST(? AS DATE)
         """, [date_str]).fetchone()
         
         count = result[0]
+        logger.debug(f"check_snapshot_exists('{date_str}'): count={count}")
         conn.close()
         
         return count > 0

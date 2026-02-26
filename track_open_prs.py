@@ -26,7 +26,7 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 QUIP_TOKEN = os.getenv("QUIP_API_TOKEN")
 QUIP_DOC_ID = os.getenv("QUIP_DOC_ID")
 QUIP_BASE_URL = os.getenv("QUIP_BASE_URL", "https://platform.quip.com")
-API_URL = os.getenv("API_URL", "http://localhost:5000/api")
+API_URL = os.getenv("API_URL", "http://localhost:5001/api")
 
 logger.info(f"Configuration: REPO={REPO_OWNER}/{REPO_NAME}, API_URL={API_URL}")
 
