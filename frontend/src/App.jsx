@@ -1,22 +1,48 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
+// Parse hash params from URL
+function getHashParams() {
+  const hash = window.location.hash.slice(1) // remove '#'
+  const params = new URLSearchParams(hash)
+  return {
+    tab: params.get('tab') || 'dashboard',
+    snapshot: params.get('snapshot') ? Number(params.get('snapshot')) : null,
+    filter: params.get('filter') || 'all',
+    cmp1: params.get('cmp1') ? Number(params.get('cmp1')) : null,
+    cmp2: params.get('cmp2') ? Number(params.get('cmp2')) : null,
+  }
+}
+
+// Build hash string from state
+function buildHash(params) {
+  const p = new URLSearchParams()
+  if (params.tab && params.tab !== 'dashboard') p.set('tab', params.tab)
+  if (params.snapshot) p.set('snapshot', params.snapshot)
+  if (params.filter && params.filter !== 'all') p.set('filter', params.filter)
+  if (params.cmp1) p.set('cmp1', params.cmp1)
+  if (params.cmp2) p.set('cmp2', params.cmp2)
+  const str = p.toString()
+  return str ? `#${str}` : ''
+}
+
 function App() {
-  const [activeTab, setActiveTab] = useState('dashboard')
+  const initialParams = getHashParams()
+  const [activeTab, setActiveTab] = useState(initialParams.tab)
   const [stats, setStats] = useState(null)
   const [snapshots, setSnapshots] = useState([])
-  const [selectedSnapshot, setSelectedSnapshot] = useState(null)
+  const [selectedSnapshot, setSelectedSnapshot] = useState(initialParams.snapshot)
   const [selectedSnapshotReviewers, setSelectedSnapshotReviewers] = useState(null)
   const [prs, setPrs] = useState([])
   const [importing, setImporting] = useState(false)
   const [importMessage, setImportMessage] = useState(null)
   const [deletingSnapshot, setDeletingSnapshot] = useState(null)
   const [showUnassignedPRs, setShowUnassignedPRs] = useState(false)
-  const [approvalFilter, setApprovalFilter] = useState('all') // 'all', 'green', 'yellow', 'red'
+  const [approvalFilter, setApprovalFilter] = useState(initialParams.filter)
   
   // Comparison state
-  const [compareSnapshot1, setCompareSnapshot1] = useState(null)
-  const [compareSnapshot2, setCompareSnapshot2] = useState(null)
+  const [compareSnapshot1, setCompareSnapshot1] = useState(initialParams.cmp1)
+  const [compareSnapshot2, setCompareSnapshot2] = useState(initialParams.cmp2)
   const [comparisonResult, setComparisonResult] = useState(null)
   const [comparing, setComparing] = useState(false)
   
@@ -29,9 +55,53 @@ function App() {
   const [currentWeek, setCurrentWeek] = useState(null)
   const [progressPercent, setProgressPercent] = useState(0)
 
+  // Track whether we're handling a popstate to avoid circular updates
+  const isPopState = useRef(false)
+
+  // Update URL hash when linkable state changes
+  useEffect(() => {
+    if (isPopState.current) {
+      isPopState.current = false
+      return
+    }
+    const newHash = buildHash({
+      tab: activeTab,
+      snapshot: selectedSnapshot,
+      filter: approvalFilter,
+      cmp1: compareSnapshot1,
+      cmp2: compareSnapshot2,
+    })
+    if (window.location.hash !== newHash) {
+      window.history.pushState(null, '', newHash || window.location.pathname)
+    }
+  }, [activeTab, selectedSnapshot, approvalFilter, compareSnapshot1, compareSnapshot2])
+
+  // Handle browser back/forward
+  useEffect(() => {
+    const onPopState = () => {
+      isPopState.current = true
+      const params = getHashParams()
+      setActiveTab(params.tab)
+      setSelectedSnapshot(params.snapshot)
+      setApprovalFilter(params.filter)
+      setCompareSnapshot1(params.cmp1)
+      setCompareSnapshot2(params.cmp2)
+      // Load snapshot data if navigating back to one
+      if (params.snapshot) {
+        fetchPRs(params.snapshot)
+      }
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  // On initial load, if URL has a snapshot, load its data
   useEffect(() => {
     fetchStats()
     fetchSnapshots()
+    if (initialParams.snapshot) {
+      fetchPRs(initialParams.snapshot)
+    }
   }, [])
 
   const fetchStats = async () => {

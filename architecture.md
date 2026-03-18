@@ -78,7 +78,7 @@ graph TB
 - **Flask REST API**: 
   - Endpoints: `/api/snapshots`, `/api/stats`, `/api/import`, `/api/import-historical`
   - Server-Sent Events for real-time progress updates
-  - Port: 5000 (local development)
+  - Port: 5001 (local development)
 
 - **PR Data Collector**:
   - Fetches open PRs from GitHub
@@ -147,13 +147,8 @@ graph TB
 
 ### Local Development
 - Frontend: `npm run dev` (port 5173)
-- Backend: `python server.py` (port 5000)
+- Backend: `python server.py` (port 5001)
 - Database: Local DuckDB file
-
-### AWS Lambda (Future)
-- Handler: `backend/lambda/handler.py`
-- Database: DuckDB in Lambda layer or EFS
-- Frontend: S3 + CloudFront
 
 ## Security Considerations
 

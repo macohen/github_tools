@@ -43,6 +43,19 @@ Thumbs.db
 .python-version
 track_prs.py~
 
+# deployment specific
+cdk/
+deploy/
+deploy_cloud_desktop.sh
+CLOUD_DESKTOP.md
+track_team_contributions.py
+typescript
+serve-frontend.py
+REMOVE_HISTORICAL_IMPORT.md
+.kiro/
+.hypothesis/
+.ipynb_checkpoints/
+
 # Coverage reports
 coverage/
 htmlcov/

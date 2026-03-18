@@ -9,7 +9,6 @@ A web application to track and visualize GitHub pull request metrics over time.
 - Visualize trends with interactive charts
 - React frontend with Vite
 - Flask backend for local development
-- AWS Lambda support for serverless deployment
 - Real-time progress tracking for historical imports
 
 ## Project Structure
@@ -23,8 +22,6 @@ A web application to track and visualize GitHub pull request metrics over time.
 │   │   └── schema.sql          # Database schema
 │   ├── local/
 │   │   └── server.py           # Local Flask API server
-│   ├── lambda/
-│   │   └── handler.py          # AWS Lambda handler
 │   └── requirements.txt
 └── frontend/
     ├── src/
@@ -185,13 +182,6 @@ Set up a cron job to collect data regularly:
 - `GET /api/snapshots/<id>/prs` - Get PRs for a specific snapshot
 - `POST /api/snapshots` - Create a new snapshot
 
-## Deployment (AWS Lambda)
-
-The backend can be deployed as AWS Lambda functions with API Gateway. The SQLite database is stored in S3 and cached in `/tmp` for performance.
-
-Required environment variables for Lambda:
-- `DB_BUCKET` - S3 bucket name for database storage
-
 ## Development
 
 ### Database Schema
@@ -238,4 +228,4 @@ npm run test:coverage
 
 ## License
 
-MIT
+Apache-2.0
