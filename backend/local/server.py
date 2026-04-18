@@ -44,6 +44,23 @@ if FRONTEND_DIR and os.path.isdir(FRONTEND_DIR):
 DB_PATH = os.getenv("DB_PATH", "pr_tracker.duckdb")
 logger.info(f"Using database: {DB_PATH}")
 
+def make_error_response(message, exception=None, status_code=500, debug_info=None):
+    """Build a safe error response.
+    
+    In production: returns only the generic message.
+    In debug mode: includes exception details and optional debug info.
+    This prevents CWE-209 (sensitive info in error messages) and
+    CWE-497 (exposure of system information).
+    """
+    response = {"message": message}
+    if app.debug and exception:
+        response["error"] = str(exception)
+        import traceback
+        response["traceback"] = traceback.format_exc()
+    if app.debug and debug_info:
+        response["debug"] = debug_info
+    return jsonify(response), status_code
+
 # Cache for in-memory database connection (shared across requests in tests)
 _memory_db_conn = None
 
@@ -101,15 +118,7 @@ def get_snapshots():
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error fetching snapshots: {str(e)}", exc_info=True)
-        error_response = {
-            "error": str(e),
-            "message": "Failed to fetch snapshots"
-        }
-        # In debug mode, include stack trace
-        if app.debug:
-            import traceback
-            error_response["traceback"] = traceback.format_exc()
-        return jsonify(error_response), 500
+        return make_error_response("Failed to fetch snapshots", e)
 
 @app.route("/api/snapshots/<int:snapshot_id>/prs", methods=["GET"])
 def get_snapshot_prs(snapshot_id):
@@ -131,15 +140,7 @@ def get_snapshot_prs(snapshot_id):
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error fetching PRs for snapshot {snapshot_id}: {str(e)}", exc_info=True)
-        error_response = {
-            "error": str(e),
-            "message": f"Failed to fetch PRs for snapshot {snapshot_id}"
-        }
-        # In debug mode, include stack trace
-        if app.debug:
-            import traceback
-            error_response["traceback"] = traceback.format_exc()
-        return jsonify(error_response), 500
+        return make_error_response(f"Failed to fetch PRs for snapshot {snapshot_id}", e)
 
 @app.route("/api/snapshots/<int:snapshot_id>", methods=["DELETE"])
 def delete_snapshot(snapshot_id):
@@ -194,15 +195,7 @@ def delete_snapshot(snapshot_id):
         
     except Exception as e:
         logger.error(f"Error deleting snapshot {snapshot_id}: {str(e)}", exc_info=True)
-        error_response = {
-            "error": str(e),
-            "message": f"Failed to delete snapshot {snapshot_id}"
-        }
-        # In debug mode, include stack trace
-        if app.debug:
-            import traceback
-            error_response["traceback"] = traceback.format_exc()
-        return jsonify(error_response), 500
+        return make_error_response(f"Failed to delete snapshot {snapshot_id}", e)
 
 @app.route("/api/snapshots", methods=["POST"])
 def create_snapshot():
@@ -254,21 +247,12 @@ def create_snapshot():
         logger.error(f"Error creating snapshot: {str(e)}", exc_info=True)
         if DB_PATH != ':memory:':
             conn.close()
-        error_response = {
-            "error": str(e),
-            "message": "Failed to create snapshot"
-        }
-        # In debug mode, include stack trace and request data
-        if app.debug:
-            import traceback
-            error_response["traceback"] = traceback.format_exc()
-            error_response["debug"] = {
-                "repo_owner": data.get("repo_owner"),
-                "repo_name": data.get("repo_name"),
-                "total_prs": data.get("total_prs"),
-                "pr_count": len(data.get("prs", []))
-            }
-        return jsonify(error_response), 500
+        return make_error_response("Failed to create snapshot", e, debug_info={
+            "repo_owner": data.get("repo_owner"),
+            "repo_name": data.get("repo_name"),
+            "total_prs": data.get("total_prs"),
+            "pr_count": len(data.get("prs", []))
+        })
 
 @app.route("/api/stats", methods=["GET"])
 def get_stats():
@@ -417,15 +401,7 @@ def get_stats():
         })
     except Exception as e:
         logger.error(f"Error fetching stats: {str(e)}", exc_info=True)
-        error_response = {
-            "error": str(e),
-            "message": "Failed to fetch statistics"
-        }
-        # In debug mode, include stack trace
-        if app.debug:
-            import traceback
-            error_response["traceback"] = traceback.format_exc()
-        return jsonify(error_response), 500
+        return make_error_response("Failed to fetch statistics", e)
 
 @app.route("/api/snapshots/<int:snapshot_id>/reviewers", methods=["GET"])
 def get_snapshot_reviewers(snapshot_id):
@@ -503,14 +479,7 @@ def get_snapshot_reviewers(snapshot_id):
         
     except Exception as e:
         logger.error(f"Error fetching reviewer stats for snapshot {snapshot_id}: {str(e)}", exc_info=True)
-        error_response = {
-            "error": str(e),
-            "message": f"Failed to fetch reviewer stats for snapshot {snapshot_id}"
-        }
-        if app.debug:
-            import traceback
-            error_response["traceback"] = traceback.format_exc()
-        return jsonify(error_response), 500
+        return make_error_response(f"Failed to fetch reviewer stats for snapshot {snapshot_id}", e)
 
 @app.route("/api/snapshots/compare", methods=["GET"])
 def compare_snapshots():
@@ -639,14 +608,7 @@ def compare_snapshots():
         
     except Exception as e:
         logger.error(f"Error comparing snapshots: {str(e)}", exc_info=True)
-        error_response = {
-            "error": str(e),
-            "message": "Failed to compare snapshots"
-        }
-        if app.debug:
-            import traceback
-            error_response["traceback"] = traceback.format_exc()
-        return jsonify(error_response), 500
+        return make_error_response("Failed to compare snapshots", e)
 
 @app.route("/api/import", methods=["POST"])
 def import_data():
@@ -680,12 +642,11 @@ def import_data():
             logger.error(f"Script failed with stderr: {result.stderr}")
             error_response = {
                 "success": False,
-                "message": "Import failed",
-                "error": result.stderr,
-                "stdout": result.stdout
+                "message": "Import failed"
             }
-            # In debug mode, include full details
             if app.debug:
+                error_response["error"] = result.stderr
+                error_response["stdout"] = result.stdout
                 error_response["debug"] = {
                     "script_path": script_path,
                     "exit_code": result.returncode
@@ -699,15 +660,7 @@ def import_data():
         }), 500
     except Exception as e:
         logger.error(f"Import error: {str(e)}", exc_info=True)
-        error_response = {
-            "success": False,
-            "message": f"Import error: {str(e)}"
-        }
-        # In debug mode, include stack trace
-        if app.debug:
-            import traceback
-            error_response["traceback"] = traceback.format_exc()
-        return jsonify(error_response), 500
+        return make_error_response("Import failed", e)
 
 @app.route("/api/reset", methods=["POST"])
 def reset_database():
