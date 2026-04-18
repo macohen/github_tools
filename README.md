@@ -149,6 +149,7 @@ Prerequisites:
 - Node.js and npm
 - Python 3.12+ with PyInstaller (`pip install pyinstaller`)
 
+2. Start the development server:
 ```bash
 cd electron
 
