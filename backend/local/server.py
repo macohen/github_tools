@@ -85,7 +85,7 @@ def get_snapshots():
     try:
         conn = get_db()
         snapshots = conn.execute(
-            f"""SELECT * FROM pr_snapshots 
+            f"""SELECT id, snapshot_date, repo_owner, repo_name, total_prs, unassigned_count, old_prs_count FROM pr_snapshots 
                WHERE snapshot_date >= current_timestamp - INTERVAL '{days} DAYS'
                ORDER BY snapshot_date DESC"""
         ).fetchall()
@@ -118,7 +118,7 @@ def get_snapshot_prs(snapshot_id):
     try:
         conn = get_db()
         prs = conn.execute(
-            "SELECT * FROM prs WHERE snapshot_id = $1 ORDER BY age_days DESC",
+            "SELECT id, snapshot_id, pr_number, title, url, created_at, updated_at, age_days, reviewers, state FROM prs WHERE snapshot_id = $1 ORDER BY age_days DESC",
             [snapshot_id]
         ).fetchall()
         
@@ -297,7 +297,7 @@ def get_stats():
     try:
         conn = get_db()
         latest = conn.execute(
-            "SELECT * FROM pr_snapshots ORDER BY snapshot_date DESC LIMIT 1"
+            "SELECT id, snapshot_date, repo_owner, repo_name, total_prs, unassigned_count, old_prs_count FROM pr_snapshots ORDER BY snapshot_date DESC LIMIT 1"
         ).fetchone()
         
         if latest:
