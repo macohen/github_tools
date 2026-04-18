@@ -39,6 +39,31 @@ To enable: `git config core.hooksPath .githooks`
 - The `/api/reset` endpoint drops all data — consider restricting access in non-local deployments
 - Log errors but never expose stack traces to end users in production (only in debug mode)
 
+## Error Responses (CWE-209, CWE-497)
+
+Never expose internal system information in API error responses:
+
+- **CWE-209** (Sensitive Info in Error Messages): Never include `str(e)`, exception messages, or raw error details in responses sent to clients. These can reveal file paths, database internals, or library versions.
+- **CWE-497** (Exposure of System Information): Never include stack traces, debug info, script paths, or environment details in production responses.
+
+Rules:
+- Always use `make_error_response()` from `server.py` for all error responses
+- The first argument is a generic, user-safe message (e.g., "Failed to fetch snapshots")
+- Exception details and debug info are only included when `app.debug is True`
+- Never construct error response dicts manually with `str(e)` or `traceback.format_exc()`
+- Log full error details server-side (`logger.error(..., exc_info=True)`) — that's where diagnostics belong
+
+Bad:
+```python
+return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+```
+
+Good:
+```python
+logger.error(f"Error fetching data: {str(e)}", exc_info=True)
+return make_error_response("Failed to fetch data", e)
+```
+
 ## Electron
 
 - `contextIsolation: true` and `nodeIntegration: false` must remain set in BrowserWindow
