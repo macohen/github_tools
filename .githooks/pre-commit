@@ -1,0 +1,59 @@
+#!/bin/bash
+# Pre-commit hook: security vulnerability checks
+# Install: git config core.hooksPath .githooks
+
+set -e
+
+echo "=== Security Checks ==="
+
+# Python dependency vulnerabilities (CVEs)
+echo ""
+echo "--- pip-audit (Python CVEs) ---"
+if command -v pip-audit &> /dev/null; then
+    pip-audit --strict || {
+        echo "❌ pip-audit found vulnerabilities. Fix before committing."
+        exit 1
+    }
+    echo "✅ No Python dependency vulnerabilities"
+else
+    echo "⚠️  pip-audit not installed (pip install pip-audit). Skipping."
+fi
+
+# Python static security analysis (CWEs) - fail only on high severity
+echo ""
+echo "--- bandit (Python CWEs) ---"
+if command -v bandit &> /dev/null; then
+    bandit -r backend/local/server.py -lll -q 2>&1 || {
+        echo "❌ bandit found high-severity issues. Fix before committing."
+        exit 1
+    }
+    echo "✅ No high-severity Python security issues"
+else
+    echo "⚠️  bandit not installed (pip install bandit). Skipping."
+fi
+
+# Node dependency vulnerabilities (CVEs)
+echo ""
+echo "--- npm audit (Node CVEs) ---"
+if [ -f frontend/package-lock.json ]; then
+    cd frontend
+    npm audit --audit-level=high 2>&1 || {
+        echo "❌ npm audit found high-severity vulnerabilities in frontend. Fix before committing."
+        exit 1
+    }
+    echo "✅ No high-severity Node vulnerabilities (frontend)"
+    cd ..
+fi
+
+if [ -f electron/package-lock.json ]; then
+    cd electron
+    npm audit --audit-level=high 2>&1 || {
+        echo "❌ npm audit found high-severity vulnerabilities in electron. Fix before committing."
+        exit 1
+    }
+    echo "✅ No high-severity Node vulnerabilities (electron)"
+    cd ..
+fi
+
+echo ""
+echo "=== All security checks passed ==="
