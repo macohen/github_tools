@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
-    setupFiles: ['./src/setupTests.js', './vitest.setup.js'],
+    setupFiles: ['./vitest.setup.js'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov', 'json'],
@@ -15,7 +15,6 @@ export default defineConfig({
         'vitest.config.js',
         'vitest.setup.js',
         'vite.config.js',
-        'src/setupTests.js',
         '**/*.test.{js,jsx}',
         '**/testGenerators.js',
         'dist/',
