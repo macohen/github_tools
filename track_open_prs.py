@@ -2,10 +2,22 @@ import requests
 import sys
 import os
 import argparse
+import logging
 from datetime import datetime, timezone, timedelta
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('track_open_prs.log'),
+        logging.StreamHandler(sys.stderr)
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Configuration
 REPO_OWNER = os.getenv("GITHUB_REPO_OWNER", "awslabs")
@@ -14,8 +26,12 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 QUIP_TOKEN = os.getenv("QUIP_API_TOKEN")
 QUIP_DOC_ID = os.getenv("QUIP_DOC_ID")
 QUIP_BASE_URL = os.getenv("QUIP_BASE_URL", "https://platform.quip.com")
+API_URL = os.getenv("API_URL", "http://localhost:5001/api")
+
+logger.info(f"Configuration: REPO={REPO_OWNER}/{REPO_NAME}, API_URL={API_URL}")
 
 if not GITHUB_TOKEN:
+    logger.error("GITHUB_TOKEN environment variable is required")
     print("Error: GITHUB_TOKEN environment variable is required", file=sys.stderr)
     sys.exit(1)
 
@@ -32,6 +48,7 @@ NOW = datetime.now(timezone.utc)
 def fetch_prs(state="open", since_date=None):
     prs = []
     page = 1
+    logger.info(f"Fetching {state} PRs from {REPO_OWNER}/{REPO_NAME}...")
     print(f"Fetching {state} PRs...")
     
     params = {"state": state, "per_page": 100}
@@ -69,6 +86,7 @@ def fetch_prs(state="open", since_date=None):
         
         page += 1
 
+    logger.info(f"Fetched {len(prs)} {state} PRs")
     print(f"Fetched {len(prs)} {state} PRs...")
     return prs
 
@@ -101,6 +119,31 @@ def get_reviewers(pr_number):
 
     return all_reviewers
 
+@lru_cache(maxsize=256)
+def get_comment_counts(pr_number):
+    """Get comment counts per reviewer for a PR"""
+    comment_counts = {}
+    
+    # Get review comments (code comments)
+    review_comments_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/pulls/{pr_number}/comments"
+    response = github_session.get(review_comments_url)
+    if response.status_code == 200:
+        for comment in response.json():
+            user = comment.get("user", {}).get("login")
+            if user:
+                comment_counts[user] = comment_counts.get(user, 0) + 1
+    
+    # Get issue comments (general PR comments)
+    issue_comments_url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/issues/{pr_number}/comments"
+    response = github_session.get(issue_comments_url)
+    if response.status_code == 200:
+        for comment in response.json():
+            user = comment.get("user", {}).get("login")
+            if user:
+                comment_counts[user] = comment_counts.get(user, 0) + 1
+    
+    return comment_counts
+
 def get_reviewers_batch(pr_numbers):
     """Fetch reviewers for multiple PRs concurrently"""
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -113,6 +156,20 @@ def get_reviewers_batch(pr_numbers):
             except Exception as e:
                 print(f"Error fetching reviewers for PR {pr_num}: {e}", file=sys.stderr)
                 results[pr_num] = set()
+        return results
+
+def get_comment_counts_batch(pr_numbers):
+    """Fetch comment counts for multiple PRs concurrently"""
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_pr = {executor.submit(get_comment_counts, pr_num): pr_num for pr_num in pr_numbers}
+        results = {}
+        for future in as_completed(future_to_pr):
+            pr_num = future_to_pr[future]
+            try:
+                results[pr_num] = future.result()
+            except Exception as e:
+                print(f"Error fetching comments for PR {pr_num}: {e}", file=sys.stderr)
+                results[pr_num] = {}
         return results
 
 @lru_cache(maxsize=1000)
@@ -167,17 +224,75 @@ def publish_to_quip(markdown_content, title="PR Summary"):
         print(f"Error publishing to Quip: {response.status_code} {response.text}", file=sys.stderr)
         sys.exit(1)
 
+def store_snapshot(processed_prs, total_prs, unassigned_count, old_prs_count):
+    """Store PR snapshot in database via API"""
+    logger.info(f"Preparing to store snapshot: {total_prs} PRs, {unassigned_count} unassigned, {old_prs_count} old")
+    
+    pr_data = []
+    for pr in processed_prs:
+        reviewer_str = ", ".join(f"{r[0]} [{r[1]}]" for r in pr["reviewers"]) if pr["reviewers"] else "None"
+        
+        # Prepare comment data
+        comments = []
+        for reviewer, count in pr.get("comment_counts", {}).items():
+            comments.append({
+                "reviewer": reviewer,
+                "comment_count": count
+            })
+        
+        pr_data.append({
+            "number": pr["number"],
+            "title": pr["title"],
+            "url": pr["html_url"],
+            "created_at": pr["created_at"],
+            "updated_at": pr["updated_at"],
+            "age_days": pr["age_days"],
+            "reviewers": reviewer_str,
+            "state": "open",
+            "comments": comments
+        })
+    
+    snapshot = {
+        "repo_owner": REPO_OWNER,
+        "repo_name": REPO_NAME,
+        "total_prs": total_prs,
+        "unassigned_count": unassigned_count,
+        "old_prs_count": old_prs_count,
+        "prs": pr_data
+    }
+    
+    logger.info(f"Sending snapshot to API: {API_URL}/snapshots")
+    print(f"Storing snapshot: {total_prs} PRs, {unassigned_count} unassigned, {old_prs_count} old")
+    
+    try:
+        response = requests.post(f"{API_URL}/snapshots", json=snapshot)
+        
+        if response.status_code == 201:
+            result = response.json()
+            logger.info(f"Snapshot stored successfully with ID: {result['snapshot_id']}")
+            print(f"✓ Snapshot stored with ID: {result['snapshot_id']}")
+        else:
+            logger.error(f"Failed to store snapshot: {response.status_code} {response.text}")
+            print(f"Error storing snapshot: {response.status_code} {response.text}", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        logger.error(f"Exception while storing snapshot: {str(e)}", exc_info=True)
+        print(f"Error storing snapshot: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+
 def main():
     parser = argparse.ArgumentParser(description='Track open pull requests')
     parser.add_argument('--skip-publish', action='store_true', help='Skip publishing to Quip')
+    parser.add_argument('--store', action='store_true', help='Store snapshot in database via API')
     args = parser.parse_args()
     
     report_date = NOW.strftime('%Y-%m-%d')
     open_prs = fetch_prs("open")
     
-    # Batch fetch all reviewers concurrently
+    # Batch fetch all reviewers and comments concurrently
     pr_numbers = [pr["number"] for pr in open_prs]
     all_reviewers = get_reviewers_batch(pr_numbers)
+    all_comments = get_comment_counts_batch(pr_numbers)
 
     # Process PRs with pre-fetched reviewer data
     unassigned_count = 0
@@ -185,7 +300,10 @@ def main():
     processed_prs = []
 
     for pr in open_prs:
+        if pr.get("draft"):
+            continue
         reviewers = all_reviewers.get(pr["number"], set())
+        comment_counts = all_comments.get(pr["number"], {})
         approval_count = sum(1 for _, state in reviewers if state == "APPROVED")
 
         ready_to_merge = "🔴"
@@ -201,17 +319,26 @@ def main():
             unassigned_count += 1
 
         processed_prs.append({
+            "number": pr["number"],
             "title": pr["title"],
             "html_url": pr["html_url"],
             "created_at": pr["created_at"],
+            "updated_at": pr["updated_at"],
             "ready": ready_to_merge,
             "approval_count": approval_count,
             "reviewers": reviewers,
-            "age": human_age(pr["created_at"])
+            "comment_counts": comment_counts,
+            "age": human_age(pr["created_at"]),
+            "age_days": days_old
         })
 
     # Sort by approval count (desc) then by age (oldest first)
     processed_prs.sort(key=lambda x: (-x["approval_count"], x["created_at"]))
+
+    # Store in database if requested
+    if args.store:
+        store_snapshot(processed_prs, len(processed_prs), unassigned_count, older_than_30_days)
+        return
 
     # Generate output
     output = StringIO()
