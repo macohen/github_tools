@@ -4,6 +4,7 @@
  */
 
 import { configureGlobal } from 'fast-check';
+import '@testing-library/jest-dom';
 
 // Configure fast-check globally for all property tests
 // Minimum 100 iterations as per design requirements
