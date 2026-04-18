@@ -1,36 +1,51 @@
 # PR Tracker
 
-A web application to track and visualize GitHub pull request metrics over time.
+A web and desktop application to track and visualize GitHub pull request metrics over time.
 
 ## Features
 
 - Track open PRs, unassigned PRs, and PRs older than 30 days
-- Store historical snapshots in DuckDB database
+- Traffic light indicators (🟢🟡🔴) based on approval status
+- Compare snapshots to see what changed between two points in time
+- Auto-loads the most recent snapshot on startup
+- Store snapshots in DuckDB with automatic checkpoint on shutdown
 - Visualize trends with interactive charts
+- Reviewer workload breakdown with comments and approvals
+- Deep linking URLs for sharing specific views
+- Approval status filters (All, Ready, Partial, Needs Review)
 - React frontend with Vite
-- Flask backend for local development
-- Real-time progress tracking for historical imports
+- Flask backend with REST API
+- Electron desktop app with bundled backend and persistent database
 
 ## Project Structure
 
 ```
 .
 ├── track_open_prs.py                  # Main script to fetch and store PR data
-├── import_historical_snapshots.py     # Import weekly snapshots for date ranges
 ├── backend/
 │   ├── db/
-│   │   └── schema.sql          # Database schema
+│   │   └── schema.sql                # Database schema
 │   ├── local/
-│   │   └── server.py           # Local Flask API server
+│   │   ├── server.py                 # Flask API server
+│   │   ├── test_server.py            # Backend tests
+│   │   └── test_server_properties.py # Property-based tests
 │   └── requirements.txt
-└── frontend/
-    ├── src/
-    │   ├── App.jsx             # Main React component
-    │   ├── main.jsx
-    │   └── index.css
-    ├── package.json
-    ├── vite.config.js
-    └── index.html
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx                   # Main React component
+│   │   ├── App.test.jsx              # Frontend tests
+│   │   ├── api.js                    # API fetch helper (web + Electron)
+│   │   ├── main.jsx
+│   │   └── index.css
+│   ├── package.json
+│   ├── vite.config.js
+│   └── index.html
+├── electron/
+│   ├── main.js                       # Electron main process
+│   ├── preload.js                    # Context bridge for renderer
+│   └── package.json                  # Electron + electron-builder config
+└── docs/
+    └── slack-app-best-practices.md   # Reference docs
 ```
 
 ## Security
@@ -71,7 +86,9 @@ This application requires sensitive credentials that should never be committed t
 
 ## Setup
 
-### Backend (Local Development)
+### Option 1: Web App (Development)
+
+#### Backend
 
 1. Install Python dependencies:
 ```bash
@@ -83,7 +100,7 @@ pip install -r requirements.txt
 
 2. Set up environment variables (see Security section above)
 
-3. Initialize and start the local server:
+3. Start the local server:
 ```bash
 cd local
 python server.py
@@ -91,7 +108,7 @@ python server.py
 
 The API will be available at `http://localhost:5001`
 
-### Frontend
+#### Frontend
 
 1. Install Node dependencies:
 ```bash
@@ -105,6 +122,65 @@ npm run dev
 ```
 
 The frontend will be available at `http://localhost:5173`
+
+### Option 2: Electron Desktop App
+
+The Electron app bundles both the frontend and backend into a single distributable application. The Flask server runs as a child process inside the app.
+
+#### Development Mode
+
+```bash
+cd electron
+npm install
+npm run dev
+```
+
+In dev mode, Electron will check if the Vite dev server is running on `localhost:5173`. If it is, it uses that (with hot reload). If not, it falls back to the pre-built frontend in `electron/frontend-dist/`. The Flask backend is spawned using the project's `backend/.venv/bin/python3`.
+
+To rebuild the frontend for Electron after making changes:
+```bash
+cd frontend
+npx vite build --mode electron
+```
+
+#### Building for Distribution
+
+Prerequisites:
+- Node.js and npm
+- Python 3.12+ with PyInstaller (`pip install pyinstaller`)
+
+```bash
+cd electron
+
+# Build everything (frontend + backend + package)
+npm run build
+
+# Or build steps individually:
+npm run build:frontend    # Vite builds React app into electron/frontend-dist/
+npm run build:backend     # PyInstaller bundles Flask into a single executable
+npm run dist              # electron-builder packages the app
+```
+
+The packaged app will be in `electron/release/`.
+
+#### How It Works
+
+1. Electron's main process finds an available port (starting at 5001)
+2. Spawns the Flask backend as a child process (PyInstaller binary in production, venv Python in dev)
+3. Waits for the backend to respond to health checks
+4. Injects `window.__BACKEND_PORT__` into the HTML so the frontend knows where to send API calls
+5. Loads the React frontend in a BrowserWindow
+6. On startup, the most recent snapshot is automatically loaded and displayed
+7. On quit, DuckDB is checkpointed (`CHECKPOINT` command) to flush all data to disk
+
+#### Database Persistence
+
+The database (`pr_tracker.duckdb`) is stored in the OS user data directory and persists across app restarts:
+- macOS: `~/Library/Application Support/Pull Request Tracker Dashboard/`
+- Linux: `~/.config/Pull Request Tracker Dashboard/`
+- Windows: `%APPDATA%/Pull Request Tracker Dashboard/`
+
+To start fresh, use `File → Reset Database...` from the menu bar. This deletes the database file, restarts the backend, and reloads the frontend with a clean state.
 
 ## Usage
 
@@ -126,32 +202,14 @@ This will:
 2. Get reviewer information for each PR
 3. Store the snapshot in the database via the API
 
-### Import Historical Snapshots
-
-To import weekly snapshots for a date range:
-
-```bash
-# Import from December 22, 2025 to today
-python import_historical_snapshots.py 2025-12-22
-
-# Import for a specific date range
-python import_historical_snapshots.py 2025-12-22 2026-01-31
-```
-
-This will:
-1. Generate weekly dates from start to end
-2. For each date, fetch PRs that were open at that time
-3. Store snapshots in the database
-4. Skip dates that already have snapshots (prevents duplicates)
-
-The script searches GitHub for PRs created before each target date and filters for those that were still open (not closed/merged yet) at that point in time.
-
 ### View the Dashboard
 
-1. Make sure both backend and frontend servers are running
+1. Make sure both backend and frontend servers are running (or use the Electron app)
 2. Open `http://localhost:5173` in your browser
-3. View current stats, 30-day trends, and historical snapshots
+3. The most recent snapshot loads automatically on startup
 4. Click on any snapshot to see the PRs from that point in time
+5. Use approval filters (🟢🟡🔴) to focus on PRs by review status
+6. Use the Compare Snapshots tab to diff two snapshots
 
 ### Publish to Quip
 
@@ -177,10 +235,15 @@ Set up a cron job to collect data regularly:
 
 ## API Endpoints
 
-- `GET /api/stats` - Get latest snapshot and 30-day trend
+- `GET /api/stats` - Get latest snapshot, 30-day trend, and reviewer workload
+- `GET /api/stats?threshold=14` - Custom age threshold for "old PRs" metric
 - `GET /api/snapshots?days=30` - Get snapshots from last N days
 - `GET /api/snapshots/<id>/prs` - Get PRs for a specific snapshot
+- `GET /api/snapshots/<id>/reviewers` - Get reviewer workload for a snapshot
+- `GET /api/snapshots/compare?snapshot1=X&snapshot2=Y` - Compare two snapshots
 - `POST /api/snapshots` - Create a new snapshot
+- `DELETE /api/snapshots/<id>` - Delete a snapshot and its associated data
+- `POST /api/import` - Trigger a live data import
 
 ## Development
 
@@ -191,26 +254,17 @@ The database has three main tables:
 - `prs` - Stores individual PR details linked to snapshots
 - `pr_comments` - Stores comment counts per reviewer per PR
 
-DuckDB is used instead of SQLite for better analytical query performance.
+DuckDB is used instead of SQLite for better analytical query performance. The schema uses `CREATE IF NOT EXISTS` so it is safe to run on an existing database.
 
 ### Running Tests
 
-Backend tests:
+Backend tests (22 tests):
 ```bash
 cd backend/local
 python -m pytest test_server.py -v
-# or
-python test_server.py
 ```
 
-Python script tests:
-```bash
-python -m pytest test_track_open_prs.py -v
-# or
-python test_track_open_prs.py
-```
-
-Frontend tests:
+Frontend tests (20 tests):
 ```bash
 cd frontend
 npm test
@@ -220,11 +274,24 @@ npm run test:ui
 npm run test:coverage
 ```
 
+### Backend Configuration
+
+The Flask server supports these environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_PATH` | `pr_tracker.duckdb` | Path to the DuckDB database file |
+| `FLASK_PORT` | `5001` | Port for the Flask server |
+| `FLASK_DEBUG` | `1` | Enable/disable debug mode (`1`/`0`) |
+| `SCHEMA_PATH` | `../db/schema.sql` | Path to the database schema file |
+| `RUNNING_IN_ELECTRON` | (unset) | When set, disables Flask's auto-reloader |
+
 ### Adding Features
 
-- Backend: Modify `backend/local/server.py` for local dev, `backend/lambda/handler.py` for Lambda
+- Backend: Modify `backend/local/server.py`
 - Frontend: Edit React components in `frontend/src/`
 - Database: Update `backend/db/schema.sql` and reinitialize
+- Electron: Modify `electron/main.js` for main process changes
 
 ## License
 

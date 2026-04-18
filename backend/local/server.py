@@ -8,8 +8,11 @@ import logging
 import threading
 import queue
 from datetime import datetime
-from flask import Flask, jsonify, request, Response, stream_with_context
+from flask import Flask, jsonify, request
 from flask_cors import CORS
+
+import atexit
+import signal
 
 # Configure logging
 logging.basicConfig(
@@ -24,6 +27,19 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+
+# Serve frontend static files when FRONTEND_DIR is set (used by Electron)
+FRONTEND_DIR = os.getenv("FRONTEND_DIR")
+if FRONTEND_DIR and os.path.isdir(FRONTEND_DIR):
+    from flask import send_from_directory
+
+    @app.route('/')
+    def serve_index():
+        return send_from_directory(FRONTEND_DIR, 'index.html')
+
+    @app.route('/assets/<path:filename>')
+    def serve_assets(filename):
+        return send_from_directory(os.path.join(FRONTEND_DIR, 'assets'), filename)
 
 DB_PATH = os.getenv("DB_PATH", "pr_tracker.duckdb")
 logger.info(f"Using database: {DB_PATH}")
@@ -47,7 +63,7 @@ def get_db():
 
 def init_db():
     logger.info("Initializing database schema")
-    schema_path = os.path.join(os.path.dirname(__file__), "../db/schema.sql")
+    schema_path = os.getenv("SCHEMA_PATH", os.path.join(os.path.dirname(__file__), "../db/schema.sql"))
     with open(schema_path) as f:
         conn = get_db()
         # DuckDB doesn't have executescript, execute statements one by one
@@ -693,149 +709,63 @@ def import_data():
             error_response["traceback"] = traceback.format_exc()
         return jsonify(error_response), 500
 
-@app.route("/api/import-historical", methods=["POST"])
-def import_historical():
-    """Trigger the import_historical_snapshots.py script with streaming progress"""
-    logger.info("POST /api/import-historical - Starting historical import")
+@app.route("/api/reset", methods=["POST"])
+def reset_database():
+    """Drop all data and reinitialize the database schema."""
+    logger.info("POST /api/reset - Resetting database")
     
-    start_date = request.args.get("start_date")
-    end_date = request.args.get("end_date")
-    
-    if not start_date:
-        logger.error("Missing start_date parameter")
-        return jsonify({
-            "success": False,
-            "message": "start_date parameter is required"
-        }), 400
-    
-    def generate():
-        """Generator function to stream progress updates"""
-        try:
-            # Get the path to import_historical_snapshots.py
-            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "import_historical_snapshots.py"))
-            logger.info(f"Running script: {script_path} with start_date={start_date}, end_date={end_date}")
-            
-            # Build command
-            cmd = [sys.executable, script_path, start_date]
-            if end_date:
-                cmd.append(end_date)
-            
-            # Run the script and stream output
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True
-            )
-            
-            imported = 0
-            skipped = 0
-            failed = 0
-            total = 0
-            current_date = None
-            
-            # Read output line by line
-            for line in iter(process.stdout.readline, ''):
-                line = line.strip()
-                if not line:
-                    continue
-                
-                logger.debug(f"Script output: {line}")
-                
-                # Parse progress from log lines
-                if 'Processing snapshot for' in line:
-                    # Extract date from line like "Processing snapshot for 2025-12-22"
-                    parts = line.split('Processing snapshot for')
-                    if len(parts) > 1:
-                        current_date = parts[1].strip()
-                        
-                        # Send progress update
-                        if total > 0:
-                            percent = int((imported + skipped + failed) / total * 100)
-                        else:
-                            percent = 0
-                        
-                        progress_data = {
-                            'type': 'progress',
-                            'current_date': current_date,
-                            'imported': imported,
-                            'skipped': skipped,
-                            'failed': failed,
-                            'percent': percent
-                        }
-                        yield f"data: {json.dumps(progress_data)}\n\n"
-                
-                elif 'Successfully imported:' in line:
-                    imported = int(line.split(':')[1].strip())
-                elif 'Skipped (already exist):' in line:
-                    skipped = int(line.split(':')[1].strip())
-                elif 'Failed:' in line:
-                    failed = int(line.split(':')[1].strip())
-                elif 'Total dates processed:' in line:
-                    total = int(line.split(':')[1].strip())
-                elif 'Will import' in line and 'weekly snapshots' in line:
-                    # Extract total from line like "Will import 9 weekly snapshots"
-                    parts = line.split('Will import')
-                    if len(parts) > 1:
-                        total = int(parts[1].split()[0])
-            
-            process.wait()
-            
-            if process.returncode == 0:
-                logger.info(f"Historical import completed: {imported} imported, {skipped} skipped, {failed} failed")
-                
-                # Send completion update
-                complete_data = {
-                    'type': 'complete',
-                    'success': True,
-                    'imported': imported,
-                    'skipped': skipped,
-                    'failed': failed,
-                    'total': total
-                }
-                yield f"data: {json.dumps(complete_data)}\n\n"
-            else:
-                logger.error(f"Script failed with return code: {process.returncode}")
-                error_data = {
-                    'type': 'error',
-                    'message': 'Historical import failed'
-                }
-                # In debug mode, include more details
-                if app.debug:
-                    error_data['debug'] = {
-                        'script_path': script_path,
-                        'exit_code': process.returncode,
-                        'command': ' '.join(cmd)
-                    }
-                yield f"data: {json.dumps(error_data)}\n\n"
-                
-        except Exception as e:
-            logger.error(f"Historical import error: {str(e)}", exc_info=True)
-            error_data = {
-                'type': 'error',
-                'message': f"Import error: {str(e)}"
-            }
-            # In debug mode, include stack trace
-            if app.debug:
-                import traceback
-                error_data['traceback'] = traceback.format_exc()
-            yield f"data: {json.dumps(error_data)}\n\n"
-    
-    return Response(
-        stream_with_context(generate()),
-        mimetype='text/event-stream',
-        headers={
-            'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no'
-        }
-    )
+    try:
+        conn = get_db()
+        # Drop tables in dependency order
+        conn.execute("DROP TABLE IF EXISTS pr_comments")
+        conn.execute("DROP TABLE IF EXISTS prs")
+        conn.execute("DROP TABLE IF EXISTS pr_snapshots")
+        # Drop sequences
+        conn.execute("DROP SEQUENCE IF EXISTS pr_comments_seq")
+        conn.execute("DROP SEQUENCE IF EXISTS prs_seq")
+        conn.execute("DROP SEQUENCE IF EXISTS pr_snapshots_seq")
+        if DB_PATH != ':memory:':
+            conn.close()
+        
+        # Reinitialize schema
+        init_db()
+        
+        logger.info("Database reset successfully")
+        return jsonify({"success": True, "message": "Database reset successfully"})
+    except Exception as e:
+        logger.error(f"Error resetting database: {str(e)}", exc_info=True)
+        return jsonify({"success": False, "message": f"Reset failed: {str(e)}"}), 500
+
+def shutdown_db():
+    """Flush and checkpoint the database on shutdown to ensure all data is persisted."""
+    if DB_PATH == ':memory:' or not os.path.exists(DB_PATH):
+        return
+    try:
+        logger.info("Shutting down: checkpointing database to flush WAL...")
+        conn = duckdb.connect(DB_PATH)
+        conn.execute("CHECKPOINT")
+        conn.close()
+        logger.info("Database checkpointed successfully")
+    except Exception as e:
+        logger.error(f"Error checkpointing database on shutdown: {e}")
 
 if __name__ == "__main__":
-    if not os.path.exists(DB_PATH):
-        logger.info("Database not found, initializing...")
-        init_db()
-    
-    logger.info("Starting Flask server on port 5001")
-    app.run(host="0.0.0.0", debug=True, port=5001)
+    # Always run init_db — schema uses IF NOT EXISTS so it's safe on existing DBs
+    logger.info("Initializing database schema (idempotent)...")
+    init_db()
+
+    if os.path.exists(DB_PATH):
+        logger.info(f"Existing database found at {DB_PATH}, data will be preserved")
+    else:
+        logger.info(f"Fresh database created at {DB_PATH}")
+
+    # Register shutdown handler to flush data
+    atexit.register(shutdown_db)
+    signal.signal(signal.SIGTERM, lambda sig, frame: (shutdown_db(), sys.exit(0)))
+
+    port = int(os.getenv("FLASK_PORT", "5001"))
+    debug = os.getenv("FLASK_DEBUG", "1") == "1"
+    # Disable reloader when launched from Electron (avoids child process + semaphore leaks)
+    use_reloader = debug and not os.getenv("RUNNING_IN_ELECTRON")
+    logger.info(f"Starting Flask server on port {port}")
+    app.run(host="0.0.0.0", debug=debug, port=port, use_reloader=use_reloader)
