@@ -149,20 +149,88 @@ Prerequisites:
 - Node.js and npm
 - Python 3.12+ with PyInstaller (`pip install pyinstaller`)
 
-2. Start the development server:
+##### Quick Build (all platforms)
+
+```bash
+cd electron
+npm install
+
+# Build everything: frontend + backend binary + packaged app
+npm run build
+```
+
+The output will be in `electron/release/`.
+
+##### Step-by-Step Build
+
+If you prefer to run each step individually:
+
 ```bash
 cd electron
 
-# Build everything (frontend + backend + package)
-npm run build
+# 1. Build the React frontend
+npm run build:frontend
 
-# Or build steps individually:
-npm run build:frontend    # Vite builds React app into electron/frontend-dist/
-npm run build:backend     # PyInstaller bundles Flask into a single executable
-npm run dist              # electron-builder packages the app
+# 2. Bundle the Flask backend into a standalone executable
+npm run build:backend
+
+# 3. Package the Electron app
+npm run dist
 ```
 
-The packaged app will be in `electron/release/`.
+To test the packaged app without creating a distributable installer:
+```bash
+npm run pack    # creates unpacked app in electron/release/
+```
+
+##### macOS
+
+```bash
+# Standard build (current architecture only)
+npm run build
+
+# Universal binary (Intel + Apple Silicon)
+npm run build:backend:mac
+npm run dist
+```
+
+Output in `electron/release/`:
+- `.dmg` — disk image installer
+- `.zip` — zipped app bundle
+
+To open the unpacked app: `open electron/release/mac*/Pull\ Request\ Tracker\ Dashboard.app`
+
+Note: The app is not code-signed by default. On first launch, right-click the app and select "Open" to bypass Gatekeeper, or sign it with your Apple Developer certificate.
+
+##### Windows
+
+```bash
+npm run build
+```
+
+Output in `electron/release/`:
+- `.exe` (NSIS installer) — standard Windows installer
+- Portable `.exe` — no installation required
+
+Note: Building Windows targets on macOS/Linux requires Wine. For best results, build on a Windows machine. PyInstaller must also run on Windows to produce a Windows binary.
+
+##### Linux
+
+```bash
+npm run build
+```
+
+Output in `electron/release/`:
+- `.AppImage` — portable, runs on most distros without installation
+- `.deb` — Debian/Ubuntu package
+
+To run the AppImage:
+```bash
+chmod +x electron/release/*.AppImage
+./electron/release/*.AppImage
+```
+
+Note: PyInstaller must run on Linux to produce a Linux binary. Cross-compilation is not supported.
 
 #### How It Works
 
