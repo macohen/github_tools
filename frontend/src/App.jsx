@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { useState, useEffect, useRef } from 'react'
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { apiFetch } from './api'
 
 // Parse hash params from URL
 function getHashParams() {
@@ -37,7 +38,6 @@ function App() {
   const [importing, setImporting] = useState(false)
   const [importMessage, setImportMessage] = useState(null)
   const [deletingSnapshot, setDeletingSnapshot] = useState(null)
-  const [showUnassignedPRs, setShowUnassignedPRs] = useState(false)
   const [approvalFilter, setApprovalFilter] = useState(initialParams.filter)
   
   // Comparison state
@@ -46,15 +46,6 @@ function App() {
   const [comparisonResult, setComparisonResult] = useState(null)
   const [comparing, setComparing] = useState(false)
   
-  // Historical import state
-  const [startDate, setStartDate] = useState('2025-12-22')
-  const [endDate, setEndDate] = useState('')
-  const [historicalImporting, setHistoricalImporting] = useState(false)
-  const [historicalMessage, setHistoricalMessage] = useState(null)
-  const [importProgress, setImportProgress] = useState(null)
-  const [currentWeek, setCurrentWeek] = useState(null)
-  const [progressPercent, setProgressPercent] = useState(0)
-
   // Track whether we're handling a popstate to avoid circular updates
   const isPopState = useRef(false)
 
@@ -98,15 +89,19 @@ function App() {
   // On initial load, if URL has a snapshot, load its data
   useEffect(() => {
     fetchStats()
-    fetchSnapshots()
-    if (initialParams.snapshot) {
-      fetchPRs(initialParams.snapshot)
-    }
+    fetchSnapshots().then(loadedSnapshots => {
+      if (initialParams.snapshot) {
+        fetchPRs(initialParams.snapshot)
+      } else if (loadedSnapshots && loadedSnapshots.length > 0) {
+        // Auto-load the most recent snapshot
+        fetchPRs(loadedSnapshots[0].id)
+      }
+    })
   }, [])
 
   const fetchStats = async () => {
     try {
-      const res = await fetch('/api/stats')
+      const res = await apiFetch('/api/stats')
       const data = await res.json()
       
       if (res.ok) {
@@ -123,23 +118,26 @@ function App() {
 
   const fetchSnapshots = async () => {
     try {
-      const res = await fetch('/api/snapshots?days=30')
+      const res = await apiFetch('/api/snapshots?days=30')
       const data = await res.json()
       
       if (res.ok) {
         setSnapshots(data)
+        return data
       } else {
         // Handle error response
         console.error('Failed to fetch snapshots:', data)
+        return []
       }
     } catch (error) {
       console.error('Error fetching snapshots:', error)
+      return []
     }
   }
 
   const fetchPRs = async (snapshotId) => {
     try {
-      const res = await fetch(`/api/snapshots/${snapshotId}/prs`)
+      const res = await apiFetch(`/api/snapshots/${snapshotId}/prs`)
       const data = await res.json()
       
       if (res.ok) {
@@ -147,7 +145,7 @@ function App() {
         setSelectedSnapshot(snapshotId)
         
         // Also fetch reviewer stats for this snapshot
-        const reviewerRes = await fetch(`/api/snapshots/${snapshotId}/reviewers`)
+        const reviewerRes = await apiFetch(`/api/snapshots/${snapshotId}/reviewers`)
         const reviewerData = await reviewerRes.json()
         
         if (reviewerRes.ok) {
@@ -174,14 +172,17 @@ function App() {
     setImportMessage(null)
     
     try {
-      const res = await fetch('/api/import', { method: 'POST' })
+      const res = await apiFetch('/api/import', { method: 'POST' })
       const data = await res.json()
       
       if (data.success) {
         setImportMessage({ type: 'success', text: 'Data imported successfully!' })
-        // Refresh data
+        // Refresh data and auto-load the newest snapshot
         await fetchStats()
-        await fetchSnapshots()
+        const loadedSnapshots = await fetchSnapshots()
+        if (loadedSnapshots && loadedSnapshots.length > 0) {
+          fetchPRs(loadedSnapshots[0].id)
+        }
       } else {
         // Build detailed error message
         let errorText = data.message || 'Import failed'
@@ -215,101 +216,6 @@ function App() {
     }
   }
 
-  const handleHistoricalImport = async () => {
-    if (!startDate) {
-      setHistoricalMessage({ type: 'error', text: 'Start date is required' })
-      return
-    }
-
-    setHistoricalImporting(true)
-    setHistoricalMessage(null)
-    setImportProgress(null)
-    setCurrentWeek(null)
-    setProgressPercent(0)
-
-    try {
-      const params = new URLSearchParams({ start_date: startDate })
-      if (endDate) {
-        params.append('end_date', endDate)
-      }
-
-      const response = await fetch(`/api/import-historical?${params}`, { method: 'POST' })
-      
-      // Check if response is streaming
-      const contentType = response.headers.get('content-type')
-      if (contentType && contentType.includes('text/event-stream')) {
-        // Handle streaming response
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() // Keep incomplete line in buffer
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = JSON.parse(line.slice(6))
-              
-              if (data.type === 'progress') {
-                setCurrentWeek(data.current_date)
-                setProgressPercent(data.percent)
-              } else if (data.type === 'complete') {
-                setImportProgress(data)
-                setHistoricalMessage({
-                  type: 'success',
-                  text: `Successfully imported ${data.imported} snapshots, skipped ${data.skipped} duplicates`
-                })
-                // Refresh data
-                await fetchStats()
-                await fetchSnapshots()
-              } else if (data.type === 'error') {
-                // Build detailed error message
-                let errorText = data.message
-                
-                // Add debug info if available
-                if (data.debug) {
-                  errorText += '\n\nDebug info:\n' + JSON.stringify(data.debug, null, 2)
-                }
-                
-                // Add traceback if available
-                if (data.traceback) {
-                  errorText += '\n\nStack trace:\n' + data.traceback
-                }
-                
-                setHistoricalMessage({ type: 'error', text: errorText })
-              }
-            }
-          }
-        }
-      } else {
-        // Fallback to non-streaming response
-        const data = await response.json()
-        
-        if (data.success) {
-          setHistoricalMessage({ 
-            type: 'success', 
-            text: `Successfully imported ${data.imported} snapshots, skipped ${data.skipped} duplicates` 
-          })
-          setImportProgress(data)
-          await fetchStats()
-          await fetchSnapshots()
-        } else {
-          setHistoricalMessage({ type: 'error', text: data.message || 'Import failed' })
-        }
-      }
-    } catch (error) {
-      setHistoricalMessage({ type: 'error', text: `Import error: ${error.message}` })
-    } finally {
-      setHistoricalImporting(false)
-      setCurrentWeek(null)
-    }
-  }
-
   const handleDeleteSnapshot = async (snapshotId, event) => {
     event.stopPropagation() // Prevent triggering the snapshot click
     
@@ -320,7 +226,7 @@ function App() {
     setDeletingSnapshot(snapshotId)
     
     try {
-      const res = await fetch(`/api/snapshots/${snapshotId}`, { method: 'DELETE' })
+      const res = await apiFetch(`/api/snapshots/${snapshotId}`, { method: 'DELETE' })
       const data = await res.json()
       
       if (res.ok) {
@@ -370,7 +276,7 @@ function App() {
     setComparisonResult(null)
     
     try {
-      const res = await fetch(`/api/snapshots/compare?snapshot1=${compareSnapshot1}&snapshot2=${compareSnapshot2}`)
+      const res = await apiFetch(`/api/snapshots/compare?snapshot1=${compareSnapshot1}&snapshot2=${compareSnapshot2}`)
       const data = await res.json()
       
       if (res.ok) {
@@ -403,12 +309,6 @@ function App() {
           onClick={() => setActiveTab('compare')}
         >
           Compare Snapshots
-        </button>
-        <button 
-          className={`tab ${activeTab === 'historical' ? 'active' : ''}`}
-          onClick={() => setActiveTab('historical')}
-        >
-          Historical Import
         </button>
       </div>
 
@@ -766,101 +666,6 @@ function App() {
         </div>
       )}
 
-      {activeTab === 'historical' && (
-        <div className="historical-import">
-          <div className="form-container">
-            <h2>Import Historical Snapshots</h2>
-            <p className="description">
-              Import weekly snapshots for a date range. The system will fetch PRs that were open at each weekly interval.
-            </p>
-
-            <div className="form-group">
-              <label htmlFor="startDate">Start Date (required)</label>
-              <input
-                id="startDate"
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                disabled={historicalImporting}
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="endDate">End Date (optional, defaults to today)</label>
-              <input
-                id="endDate"
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                disabled={historicalImporting}
-              />
-            </div>
-
-            <button
-              onClick={handleHistoricalImport}
-              disabled={historicalImporting || !startDate}
-              className="import-button large"
-            >
-              {historicalImporting ? 'Importing Historical Data...' : 'Start Import'}
-            </button>
-
-            {historicalImporting && currentWeek && (
-              <div className="progress-container">
-                <div className="progress-info">
-                  <span>Processing week: {currentWeek}</span>
-                  <span>{progressPercent}%</span>
-                </div>
-                <div className="progress-bar">
-                  <div 
-                    className="progress-fill" 
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {historicalMessage && (
-              <div className={`message ${historicalMessage.type}`}>
-                {historicalMessage.text}
-              </div>
-            )}
-
-            {importProgress && (
-              <div className="progress-summary">
-                <h3>Import Summary</h3>
-                <div className="progress-stats">
-                  <div className="progress-stat">
-                    <span className="progress-label">Total Dates:</span>
-                    <span className="progress-value">{importProgress.total}</span>
-                  </div>
-                  <div className="progress-stat success">
-                    <span className="progress-label">Imported:</span>
-                    <span className="progress-value">{importProgress.imported}</span>
-                  </div>
-                  <div className="progress-stat warning">
-                    <span className="progress-label">Skipped (duplicates):</span>
-                    <span className="progress-value">{importProgress.skipped}</span>
-                  </div>
-                  <div className="progress-stat error">
-                    <span className="progress-label">Failed:</span>
-                    <span className="progress-value">{importProgress.failed}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="info-box">
-              <h3>How it works</h3>
-              <ul>
-                <li>Generates weekly dates from start to end date</li>
-                <li>For each date, fetches PRs that were open at that time</li>
-                <li>Automatically skips dates that already have snapshots</li>
-                <li>May take several minutes depending on date range</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

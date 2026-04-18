@@ -216,7 +216,6 @@ describe('App Component', () => {
     
     expect(screen.getByText('Dashboard')).toBeInTheDocument()
     expect(screen.getByText('Compare Snapshots')).toBeInTheDocument()
-    expect(screen.getByText('Historical Import')).toBeInTheDocument()
   })
 
   it('switches between tabs', async () => {

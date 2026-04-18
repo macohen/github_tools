@@ -1,0 +1,9 @@
+node_modules/
+frontend-dist/
+release/
+dist/
+*.dmg
+*.AppImage
+*.deb
+*.exe
+*.snap

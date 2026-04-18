@@ -1,8 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  // Use relative paths for Electron file:// loading
+  base: mode === 'electron' ? './' : '/',
   server: {
     proxy: {
       '/api': {
@@ -10,5 +12,9 @@ export default defineConfig({
         changeOrigin: true
       }
     }
+  },
+  build: {
+    outDir: mode === 'electron' ? '../electron/frontend-dist' : 'dist',
+    emptyOutDir: true,
   }
-})
+}))
