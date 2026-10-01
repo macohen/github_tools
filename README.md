@@ -44,8 +44,8 @@ A web and desktop application to track and visualize GitHub pull request metrics
 │   ├── main.js                       # Electron main process
 │   ├── preload.js                    # Context bridge for renderer
 │   └── package.json                  # Electron + electron-builder config
-└── docs/
-    └── slack-app-best-practices.md   # Reference docs
+└── skills/
+    └── pr_tracker_skill.md           # AI agent skill for Claude Code and Kiro
 ```
 
 ## Security
@@ -300,6 +300,62 @@ Set up a cron job to collect data regularly:
 ```bash
 # Run every 6 hours
 0 */6 * * * cd /path/to/pr-tracker && /path/to/.venv/bin/python track_open_prs.py --store
+```
+
+## AI Agent Skill
+
+The `skills/pr_tracker_skill.md` file defines an agent skill named `pr-tracker`. The skill builds an HTML report of open PRs for a GitHub repository. The report includes summary cards, an age histogram, and a table color-coded by approval status. The skill can also publish the report to a SharePoint page.
+
+### Prerequisites
+
+The skill calls GitHub and SharePoint through Model Context Protocol (MCP) tools. Configure these MCP servers in your agent before you use the skill:
+
+- **GitHub MCP server** (required). The skill lists open PRs and reads their reviews.
+- **SharePoint MCP server** (optional). The skill uses it only to publish the report.
+
+The skill file names tools such as `github_pat__list_pull_requests` and `run_python`. Your agent might expose these tools under different names. If a tool name does not match, edit the skill to use the names that your agent exposes.
+
+### Install in Claude Code
+
+Claude Code loads each skill from `<skills-dir>/<skill-name>/SKILL.md`. Install the skill for all your projects:
+
+```bash
+mkdir -p ~/.claude/skills/pr-tracker
+cp skills/pr_tracker_skill.md ~/.claude/skills/pr-tracker/SKILL.md
+```
+
+To install it for this project only, use `.claude/skills/pr-tracker/SKILL.md` in the repository root instead.
+
+Start a new Claude Code session and run `/skills` to confirm that `pr-tracker` appears. Invoke the skill with `/pr-tracker`, or ask for it directly:
+
+```
+/pr-tracker https://github.com/awslabs/aws-athena-query-federation
+```
+
+### Install in Kiro
+
+Kiro uses the same `SKILL.md` layout. Install the skill for all your workspaces:
+
+```bash
+mkdir -p ~/.kiro/skills/pr-tracker
+cp skills/pr_tracker_skill.md ~/.kiro/skills/pr-tracker/SKILL.md
+```
+
+To install it for this workspace only, use `.kiro/skills/pr-tracker/SKILL.md` in the repository root instead.
+
+Restart Kiro (IDE or `kiro-cli chat`) so that it discovers the skill. Then ask Kiro to run it:
+
+```
+Use the pr-tracker skill to report on open PRs in https://github.com/awslabs/aws-athena-query-federation
+```
+
+### Update the skill
+
+The copy in your skills directory does not track changes to this repository. Re-run the `cp` command after you pull updates. To track changes automatically, replace the copy with a symbolic link:
+
+```bash
+ln -sf "$(pwd)/skills/pr_tracker_skill.md" ~/.claude/skills/pr-tracker/SKILL.md
+ln -sf "$(pwd)/skills/pr_tracker_skill.md" ~/.kiro/skills/pr-tracker/SKILL.md
 ```
 
 ## API Endpoints
